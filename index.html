@@ -2196,7 +2196,7 @@ window.doSignup = async function(){
   try {
     const { data, error } = await sb.auth.signUp({
       email, password,
-      options: { data: { display_name: name } },
+      options: { data: { display_name: name }, emailRedirectTo: window.location.origin + window.location.pathname },
     });
     if (error) { errEl.textContent = friendlyAuthError(error); return; }
     if (data.user && !data.session) {
