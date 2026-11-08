@@ -252,6 +252,38 @@
   .why-row .tag { font-size:.75rem; color:var(--text-dim); margin-top:2px; font-weight:400; }
   .insight-card { background:#0c120f; border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-top:12px; text-align:left; }
   .insight-card p { margin:8px 0 0 0; font-size:.92rem; line-height:1.5; }
+  /* YogAI Arduino phone-mount control panel */
+  .ya-mount-card { margin-top:16px; }
+  .ya-mount-card-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+  .ya-mount-card-head > div { flex:1; min-width:190px; }
+  #ya-mount-panel[hidden] { display:none !important; }
+  .ya-mount-status-row { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-top:14px; }
+  .ya-mount-note { line-height:1.5; }
+  .ya-mount-actions { margin-top:10px; }
+  .ya-mount-actions button { flex:1 1 145px; }
+  .ya-mount-angle-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:14px; }
+  .ya-mount-angle-tile { background:#0c120f; border:1px solid var(--ya-line,#26332d); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:4px; }
+  .ya-mount-angle-tile span { color:var(--ya-mute,#8fa097); font-size:.78rem; }
+  .ya-mount-angle-tile strong { color:var(--ya-teal,#4fd1b0); font-size:1.55rem; }
+  .ya-mount-section { margin-top:16px; padding:14px; background:#0c120f; border:1px solid var(--ya-line,#26332d); border-radius:10px; }
+  .ya-mount-section h3 { color:var(--ya-gold,#dcb25f); }
+  .ya-mount-select { margin-bottom:8px; }
+  .ya-mount-jog-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+  .ya-mount-jog-grid button { width:100%; padding:10px 8px; }
+  .ya-mount-slider-row { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:10px; font-size:.84rem; }
+  .ya-mount-slider-row output { color:var(--ya-teal,#4fd1b0); font-weight:700; }
+  #ya-mount-panel input[type=range] { width:100%; accent-color:var(--ya-teal,#4fd1b0); margin:5px 0 8px; }
+  .ya-mount-direction-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; align-items:center; margin-top:10px; }
+  .ya-mount-direction-grid .form-label { margin:0; }
+  .ya-mount-safety { border-left:3px solid var(--ya-gold,#dcb25f); padding-left:10px; margin-top:12px; }
+  .ya-mount-message.error { color:var(--danger,#e57373); }
+  .ya-mount-message.success { color:var(--ya-teal,#4fd1b0); }
+  @media (max-width:520px) {
+    .ya-mount-card-head { align-items:stretch; }
+    .ya-mount-card-head button { width:100%; }
+    .ya-mount-angle-grid { grid-template-columns:1fr 1fr; }
+    .ya-mount-direction-grid { grid-template-columns:1fr; }
+  }
   @media (prefers-reduced-motion:reduce) { .ach.fresh { animation:none; } .toast { transition:none; } }
 
   /* =====================================================================
@@ -1320,6 +1352,75 @@
           </div>
         </div>
       </div>
+      <div class="panel-box ya-mount-card" id="ya-mount-card">
+        <div class="ya-mount-card-head">
+          <div>
+            <h3 style="margin-bottom:4px;color:var(--ya-teal,#4fd1b0);">Phone Mount Tracker</h3>
+            <div class="hint" style="margin-top:0;">Use the same YogAI camera and MediaPipe landmarks to control the two-axis Arduino mount.</div>
+          </div>
+          <button type="button" class="btn-secondary" id="ya-mount-toggle" aria-expanded="false" aria-controls="ya-mount-panel">Arduino Control Panel</button>
+        </div>
+        <div id="ya-mount-panel" hidden>
+          <div class="ya-mount-status-row">
+            <span class="status-pill status-adjust" id="ya-mount-connection-state">NOT CONNECTED</span>
+            <span class="chip" id="ya-mount-transport-kind">USB transport: not selected</span>
+          </div>
+          <div class="hint ya-mount-note">Start a YogAI practice first so its camera is active. For automatic tracking, the phone camera must physically move with the servo mount. WebUSB is preferred on Android for your Uno R3 (ATmega16U2).</div>
+          <div class="nav-row ya-mount-actions">
+            <button type="button" class="btn-primary" id="ya-mount-connect">Connect Arduino</button>
+            <button type="button" class="btn-secondary" id="ya-mount-connect-usb">Connect via WebUSB</button>
+            <button type="button" class="btn-secondary" id="ya-mount-connect-serial">Connect via Web Serial</button>
+            <button type="button" class="btn-danger" id="ya-mount-disconnect" disabled>Disconnect</button>
+          </div>
+          <div id="ya-mount-connection-message" class="hint" role="status" aria-live="polite">Not connected. Connect the Uno over USB-OTG (Android) or USB (desktop).</div>
+
+          <div class="ya-mount-angle-grid">
+            <div class="ya-mount-angle-tile"><span>Yaw · left / right</span><strong id="ya-mount-yaw">90°</strong></div>
+            <div class="ya-mount-angle-tile"><span>Tilt · up / down</span><strong id="ya-mount-tilt">90°</strong></div>
+          </div>
+
+          <div class="ya-mount-section">
+            <h3>Manual servo test</h3>
+            <label class="form-label" for="ya-mount-jog-step">Jog amount</label>
+            <select id="ya-mount-jog-step" class="select-input ya-mount-select">
+              <option value="2">2°</option><option value="5" selected>5°</option><option value="10">10°</option><option value="15">15°</option>
+            </select>
+            <div class="ya-mount-jog-grid">
+              <button type="button" class="btn-secondary" id="ya-mount-yaw-minus" disabled>Yaw −</button>
+              <button type="button" class="btn-secondary" id="ya-mount-yaw-plus" disabled>Yaw +</button>
+              <button type="button" class="btn-secondary" id="ya-mount-tilt-minus" disabled>Tilt −</button>
+              <button type="button" class="btn-secondary" id="ya-mount-tilt-plus" disabled>Tilt +</button>
+            </div>
+            <button type="button" class="btn-secondary" id="ya-mount-centre" disabled style="width:100%;margin-top:10px;">Centre servos (90°, 90°)</button>
+          </div>
+
+          <div class="ya-mount-section">
+            <h3>Automatic tracking response</h3>
+            <div class="ya-mount-slider-row"><label for="ya-mount-dead-zone">Centre dead zone</label><output id="ya-mount-dead-zone-value">±8%</output></div>
+            <input id="ya-mount-dead-zone" type="range" min="2" max="20" step="1" value="8">
+            <div class="ya-mount-slider-row"><label for="ya-mount-speed">Maximum speed</label><output id="ya-mount-speed-value">45°/s</output></div>
+            <input id="ya-mount-speed" type="range" min="10" max="90" step="5" value="45">
+            <div class="ya-mount-slider-row"><label for="ya-mount-gain">Tracking sensitivity</label><output id="ya-mount-gain-value">24</output></div>
+            <input id="ya-mount-gain" type="range" min="5" max="45" step="1" value="24">
+            <div class="ya-mount-slider-row"><label for="ya-mount-smoothing">Position smoothing</label><output id="ya-mount-smoothing-value">0.40</output></div>
+            <input id="ya-mount-smoothing" type="range" min="0.15" max="0.80" step="0.05" value="0.40">
+            <div class="ya-mount-direction-grid">
+              <label class="form-label" for="ya-mount-yaw-direction">Yaw direction</label>
+              <select id="ya-mount-yaw-direction" class="select-input ya-mount-select"><option value="1">Normal</option><option value="-1">Reversed</option></select>
+              <label class="form-label" for="ya-mount-tilt-direction">Tilt direction</label>
+              <select id="ya-mount-tilt-direction" class="select-input ya-mount-select"><option value="1">Normal</option><option value="-1">Reversed</option></select>
+            </div>
+          </div>
+
+          <div class="nav-row ya-mount-actions">
+            <button type="button" class="btn-primary" id="ya-mount-start-tracking" disabled>Start Servo Tracking</button>
+            <button type="button" class="btn-danger" id="ya-mount-stop-tracking" disabled>Stop Servo Tracking</button>
+          </div>
+          <div class="status-pill status-adjust" id="ya-mount-tracking-state" style="margin-top:10px;">TRACKING OFF</div>
+          <div id="ya-mount-tracking-message" class="hint" role="status" aria-live="polite">Manual controls are available after connecting the Arduino. Automatic tracking also requires an active camera.</div>
+          <div class="hint ya-mount-safety">Start with the mount unloaded. Keep the phone off the SG90 holder during testing; these micro-servos may not have enough torque for a phone. Servos need a separate regulated supply with common ground to Arduino GND.</div>
+        </div>
+      </div>
       <div class="nav-row">
         <button class="btn-danger" onclick="stopPractice()">Stop Camera & Go Back</button>
       </div>
@@ -1334,6 +1435,7 @@ import { PoseLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@m
 // build of supabase-js has a known runtime bug (broken nested default
 // imports) as of late 2025; esm.sh doesn't have this problem.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.108.1";
+import { createYogaiArduinoMount } from "./tracker/arduino-mount.mjs";
 
 // ============================================================
 // SUPABASE AUTH - real user accounts (signup/login/logout/session
@@ -3100,10 +3202,13 @@ window.reportPain = async function(){
   const current = getCurrentExerciseName();
   if (!current) return;
 
+  stopPhoneMountTracking("Practice paused after pain was reported. Servo tracking is off.");
+
   // 1. Stop the current exercise immediately.
   if (rafId) cancelAnimationFrame(rafId);
   if (stream) stream.getTracks().forEach(t=>t.stop());
   stream = null;
+  refreshPhoneMountUI();
 
   // 2/3. Mark as avoided, persist if logged in.
   let avoidedSet;
@@ -4149,6 +4254,7 @@ const SOUNDS = {
 };
 
 let landmarker=null, stream=null, rafId=null;
+let phoneMount = null;
 const videoEl=document.getElementById("webcam"), canvasEl=document.getElementById("overlay"), ctx=canvasEl.getContext("2d");
 
 async function initLandmarker(){
@@ -4166,9 +4272,10 @@ async function openCamera(){
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video:{width:640,height:480} });
     videoEl.srcObject = stream; await videoEl.play();
-  } catch(err){ alert("Could not access the camera: "+err.message); return false; }
+  } catch(err){ alert("Could not access the camera: "+err.message); refreshPhoneMountUI(); return false; }
   await initLandmarker();
   canvasEl.width = videoEl.videoWidth||640; canvasEl.height = videoEl.videoHeight||480;
+  refreshPhoneMountUI();
   return true;
 }
 
@@ -4268,9 +4375,12 @@ window.resetCounter = function(){
   if(practiceMode==='calorie'){ totalCalories=0; document.getElementById("calorie-display").textContent="0.00 kcal"; }
 };
 window.stopPractice = function(){
+  stopPhoneMountTracking("Practice stopped. Servo tracking is off.");
+  if(phoneMount && phoneMount.isConnected()) void phoneMount.disconnect().catch(e=>console.warn("Arduino disconnect:",e));
   if(rafId) cancelAnimationFrame(rafId);
   if(stream) stream.getTracks().forEach(t=>t.stop());
   stream=null;
+  refreshPhoneMountUI();
   // Genuinely completed work gets a summary + is saved; otherwise behave exactly as before.
   const result = recFinalize("stopped");
   if(result){ presentSummary(result); return; }
@@ -4278,6 +4388,162 @@ window.stopPractice = function(){
   else if(practiceMode==='calorie') goToScreen("calorie");
   else goToScreen("home");
 };
+
+function setPhoneMountMessage(id, message, kind="info"){
+  const el=document.getElementById(id); if(!el) return;
+  el.textContent=message;
+  el.className="hint ya-mount-message "+kind;
+}
+function refreshPhoneMountUI(){
+  const connected=!!(phoneMount && phoneMount.isConnected());
+  const tracking=!!(phoneMount && phoneMount.isTracking());
+  const cameraOn=!!stream && !!landmarker;
+  const state=document.getElementById("ya-mount-connection-state");
+  const transport=document.getElementById("ya-mount-transport-kind");
+  if(state){ state.textContent=connected?"ARDUINO CONNECTED":"NOT CONNECTED"; state.className="status-pill "+(connected?"status-correct":"status-adjust"); }
+  if(transport){
+    const kind=phoneMount ? phoneMount.getTransportKind() : null;
+    transport.textContent="USB transport: "+(kind==="web-usb"?"WebUSB":kind==="web-serial"?"Web Serial":"not selected");
+  }
+  const setDisabled=(id,disabled)=>{ const el=document.getElementById(id); if(el) el.disabled=disabled; };
+  setDisabled("ya-mount-connect",connected);
+  setDisabled("ya-mount-connect-usb",connected);
+  setDisabled("ya-mount-connect-serial",connected);
+  setDisabled("ya-mount-disconnect",!connected);
+  setDisabled("ya-mount-centre",!connected||tracking);
+  ["ya-mount-yaw-minus","ya-mount-yaw-plus","ya-mount-tilt-minus","ya-mount-tilt-plus"].forEach(id=>setDisabled(id,!connected||tracking));
+  setDisabled("ya-mount-start-tracking",!connected||!cameraOn||tracking);
+  setDisabled("ya-mount-stop-tracking",!tracking);
+  const toggle=document.getElementById("ya-mount-toggle");
+  const panel=document.getElementById("ya-mount-panel");
+  if(toggle) toggle.textContent=(panel && !panel.hidden ? "Close" : "Open")+" Arduino Control Panel"+(tracking?" · Tracking ON":"");
+}
+function syncPhoneMountSettings(){
+  if(!phoneMount) return;
+  const value=id=>document.getElementById(id)?.value;
+  phoneMount.setSettings({
+    deadZoneX:Number(value("ya-mount-dead-zone")||8)/100,
+    deadZoneY:Number(value("ya-mount-dead-zone")||8)/100,
+    maxSpeedDegPerS:Number(value("ya-mount-speed")||45),
+    gainYaw:Number(value("ya-mount-gain")||24),
+    gainTilt:Number(value("ya-mount-gain")||24),
+    emaAlpha:Number(value("ya-mount-smoothing")||0.4),
+    yawDirection:Number(value("ya-mount-yaw-direction")||1),
+    tiltDirection:Number(value("ya-mount-tilt-direction")||1),
+  });
+  const labels=[
+    ["ya-mount-dead-zone-value",`±${value("ya-mount-dead-zone")||8}%`],
+    ["ya-mount-speed-value",`${value("ya-mount-speed")||45}°/s`],
+    ["ya-mount-gain-value",String(value("ya-mount-gain")||24)],
+    ["ya-mount-smoothing-value",Number(value("ya-mount-smoothing")||0.4).toFixed(2)],
+  ];
+  labels.forEach(([id,text])=>{ const el=document.getElementById(id); if(el) el.textContent=text; });
+}
+function updatePhoneMountAngles(angles){
+  const y=document.getElementById("ya-mount-yaw"), t=document.getElementById("ya-mount-tilt");
+  if(y) y.textContent=`${angles.yaw}°`;
+  if(t) t.textContent=`${angles.tilt}°`;
+  refreshPhoneMountUI();
+}
+function initPhoneMountControls(){
+  if(phoneMount) return;
+  phoneMount=createYogaiArduinoMount({
+    onStatus:(message,kind)=>{
+      setPhoneMountMessage("ya-mount-connection-message",message,kind);
+      refreshPhoneMountUI();
+    },
+    onAngles:updatePhoneMountAngles,
+    onTrackingState:(message,kind)=>{
+      const el=document.getElementById("ya-mount-tracking-state");
+      if(el){ el.textContent=message; el.className="status-pill "+(kind==="success"||kind==="centred"?"status-correct":kind==="tracking"?"status-adjust":"status-adjust"); }
+      refreshPhoneMountUI();
+    },
+  });
+  const byId=id=>document.getElementById(id);
+  byId("ya-mount-toggle")?.addEventListener("click",()=>{
+    const panel=byId("ya-mount-panel"), btn=byId("ya-mount-toggle");
+    if(!panel||!btn) return;
+    const open=panel.hidden;
+    panel.hidden=!open;
+    btn.setAttribute("aria-expanded",open?"true":"false");
+    btn.textContent=open?"Close Arduino Control Panel":"Arduino Control Panel";
+    if(open) panel.scrollIntoView({behavior:"smooth",block:"nearest"});
+  });
+  byId("ya-mount-connect")?.addEventListener("click",async()=>{
+    try{ await phoneMount.connect("auto"); setPhoneMountMessage("ya-mount-connection-message","Arduino connected. Use manual jogs before enabling automatic tracking.","success"); }
+    catch(e){ setPhoneMountMessage("ya-mount-connection-message",e?.message||String(e),"error"); }
+    refreshPhoneMountUI();
+  });
+  byId("ya-mount-connect-usb")?.addEventListener("click",async()=>{
+    try{ await phoneMount.connect("web-usb"); setPhoneMountMessage("ya-mount-connection-message","Arduino connected through WebUSB.","success"); }
+    catch(e){ setPhoneMountMessage("ya-mount-connection-message",e?.message||String(e),"error"); }
+    refreshPhoneMountUI();
+  });
+  byId("ya-mount-connect-serial")?.addEventListener("click",async()=>{
+    try{ await phoneMount.connect("web-serial"); setPhoneMountMessage("ya-mount-connection-message","Arduino connected through Web Serial.","success"); }
+    catch(e){ setPhoneMountMessage("ya-mount-connection-message",e?.message||String(e),"error"); }
+    refreshPhoneMountUI();
+  });
+  byId("ya-mount-disconnect")?.addEventListener("click",async()=>{
+    try{ await phoneMount.disconnect(); }
+    catch(e){ setPhoneMountMessage("ya-mount-connection-message",e?.message||String(e),"error"); }
+    refreshPhoneMountUI();
+  });
+  byId("ya-mount-centre")?.addEventListener("click",async()=>{
+    try{ await phoneMount.centre(); setPhoneMountMessage("ya-mount-tracking-message","Centred at yaw 90°, tilt 90°.","success"); }
+    catch(e){ setPhoneMountMessage("ya-mount-tracking-message",e?.message||String(e),"error"); }
+  });
+  const jog=(axis,direction)=>async()=>{
+    try{ await phoneMount.nudge(axis,direction,Number(byId("ya-mount-jog-step")?.value||5)); }
+    catch(e){ setPhoneMountMessage("ya-mount-tracking-message",e?.message||String(e),"error"); }
+  };
+  byId("ya-mount-yaw-minus")?.addEventListener("click",jog("yaw",-1));
+  byId("ya-mount-yaw-plus")?.addEventListener("click",jog("yaw",1));
+  byId("ya-mount-tilt-minus")?.addEventListener("click",jog("tilt",-1));
+  byId("ya-mount-tilt-plus")?.addEventListener("click",jog("tilt",1));
+  byId("ya-mount-start-tracking")?.addEventListener("click",async()=>{
+    try{
+      if(!stream||!landmarker) throw new Error("Start a YogAI practice and wait for the camera before starting servo tracking.");
+      syncPhoneMountSettings();
+      phoneMount.startTracking();
+      setPhoneMountMessage("ya-mount-tracking-message","Automatic tracking is active. The existing YogAI camera and MediaPipe landmarks are being reused.","success");
+    }catch(e){ setPhoneMountMessage("ya-mount-tracking-message",e?.message||String(e),"error"); }
+    refreshPhoneMountUI();
+  });
+  byId("ya-mount-stop-tracking")?.addEventListener("click",()=>{
+    phoneMount.stopTracking("Automatic tracking stopped. The Arduino holds its last target.");
+    setPhoneMountMessage("ya-mount-tracking-message","Servo tracking is off. Manual controls are available.","info");
+    refreshPhoneMountUI();
+  });
+  ["ya-mount-dead-zone","ya-mount-speed","ya-mount-gain","ya-mount-smoothing","ya-mount-yaw-direction","ya-mount-tilt-direction"].forEach(id=>{
+    byId(id)?.addEventListener("input",syncPhoneMountSettings);
+    byId(id)?.addEventListener("change",syncPhoneMountSettings);
+  });
+  syncPhoneMountSettings();
+  refreshPhoneMountUI();
+  window.addEventListener("pagehide",()=>{ void phoneMount?.disconnect().catch(()=>{}); });
+}
+function updatePhoneMountFromPose(landmarks){
+  if(!phoneMount || !phoneMount.isTracking()) return;
+  void phoneMount.updateFromLandmarks(landmarks,performance.now()).catch(error=>{
+    console.warn("YogAI phone-mount tracking stopped:",error);
+    phoneMount.stopTracking("Servo command failed. Tracking stopped; check the USB connection.");
+    setPhoneMountMessage("ya-mount-tracking-message",error?.message||String(error),"error");
+    refreshPhoneMountUI();
+  });
+}
+function stopPhoneMountTracking(message="Camera stopped. Servo tracking is off; the Arduino holds its last target."){
+  if(!phoneMount) return;
+  phoneMount.stopTracking(message);
+  refreshPhoneMountUI();
+}
+function drawPhoneMountGuide(){
+  if(!phoneMount || !phoneMount.isTracking()) return;
+  const w=canvasEl.width,h=canvasEl.height;if(!w||!h)return;
+  const dead=Number(document.getElementById("ya-mount-dead-zone")?.value||8)/100;
+  const x=w*0.5,y=h*0.5,dx=w*dead,dy=h*dead;
+  ctx.save();ctx.strokeStyle="rgba(79,209,176,.95)";ctx.lineWidth=2;ctx.setLineDash([8,6]);ctx.strokeRect(x-dx,y-dy,dx*2,dy*2);ctx.setLineDash([]);ctx.strokeStyle="rgba(255,255,255,.9)";ctx.beginPath();ctx.moveTo(x-14,y);ctx.lineTo(x+14,y);ctx.moveTo(x,y-14);ctx.lineTo(x,y+14);ctx.stroke();ctx.restore();
+}
 
 function caloriesForReps(exerciseName, reps){ return (CALORIE_K[exerciseName]||0) * weightKg * reps; }
 
@@ -4304,6 +4570,7 @@ function loop(){
   if(result.landmarks && result.landmarks.length>0){
     lastPersonDetected = true;
     const lm = result.landmarks[0]; const w=canvasEl.width, h=canvasEl.height;
+    updatePhoneMountFromPose(lm);
     ctx.strokeStyle="#7dd3a0"; ctx.lineWidth=2;
     POSE_CONNECTIONS.forEach(([a,b])=>{ ctx.beginPath(); ctx.moveTo(lm[a].x*w,lm[a].y*h); ctx.lineTo(lm[b].x*w,lm[b].y*h); ctx.stroke(); });
     ctx.fillStyle="#4f8cff"; lm.forEach(pt=>{ ctx.beginPath(); ctx.arc(pt.x*w,pt.y*h,4,0,2*Math.PI); ctx.fill(); });
@@ -4417,11 +4684,15 @@ function loop(){
       }
     }
   } else {
+    updatePhoneMountFromPose(null);
     if(lastPersonDetected){ playSound('noPersonDetected'); }
     lastPersonDetected = false;
     document.getElementById("status-pill").textContent="No person detected";
     document.getElementById("status-pill").className="status-pill status-adjust";
   }
+
+  // The tracker guide is drawn on the existing YogAI overlay; no second canvas or camera is opened.
+  drawPhoneMountGuide();
 
   // --- Sequence auto-advance ---
   if(practiceMode==='sequence' && sequenceState==='paused'){
@@ -4882,9 +5153,12 @@ function renderSummary(){
 
 // ---------- practice session lifecycle glue ----------
 function stopCameraNow(){
+  stopPhoneMountTracking();
+  if(phoneMount && phoneMount.isConnected()) void phoneMount.disconnect().catch(e=>console.warn("Arduino disconnect:",e));
   if(rafId) cancelAnimationFrame(rafId);
   if(stream) stream.getTracks().forEach(t=>t.stop());
   stream = null;
+  refreshPhoneMountUI();
 }
 // Called from the loop when the last step of a sequence finishes.
 function finishPracticeFromLoop(){
@@ -6557,6 +6831,7 @@ document.addEventListener("keydown", ev=>{
   if((ev.key === "Enter" || ev.key === " ") && t && t.classList && t.classList.contains("home-card")){ ev.preventDefault(); t.click(); }
 });
 initYaExplorer();
+initPhoneMountControls();
 </script>
 </body>
 </html>
