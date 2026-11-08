@@ -72,6 +72,15 @@
   .metric-ok { color:var(--accent); } .metric-bad { color:var(--danger); }
   .mini-pose-btn { width:100%; text-align:left; padding:7px 10px; margin-bottom:5px; background:#0c120f; border:1px solid var(--border); border-radius:6px; color:var(--text-dim); font-size:.78rem; cursor:pointer; }
   .mini-pose-btn.current { border-color:var(--accent); color:var(--accent); background:#10261f; }
+  /* Switch asana: collapsed by default, a pop-down list reveals the other asanas */
+  .switch-h3 { margin:0; }
+  .switch-toggle { display:inline-flex; align-items:center; gap:8px; min-height:36px; padding:6px 2px; background:transparent; color:var(--text-dim); font-size:.95rem; font-weight:600; text-align:left; border-radius:6px; }
+  .switch-toggle:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .switch-caret { display:inline-block; font-size:.9rem; line-height:1; color:var(--accent); transition:transform .15s ease; }
+  .switch-toggle[aria-expanded="true"] .switch-caret { transform:rotate(180deg); }
+  .switch-current { margin:2px 0 8px 0; font-size:.8rem; color:var(--accent); overflow-wrap:anywhere; }
+  #mini-pose-list { position:relative; max-height:min(40vh,280px); overflow-y:auto; margin-bottom:6px; padding-right:2px; }
+  #mini-pose-list[hidden] { display:none; }
   .nav-row { display:flex; gap:10px; margin-top:18px; flex-wrap:wrap; }
   .hint { font-size:.8rem; color:var(--text-dim); margin-top:10px; }
   .tip-text { font-size:.85rem; color:var(--text-dim); margin-top:6px; }
@@ -1343,8 +1352,9 @@
             <div id="pain-doctor-warning" style="display:none;"></div>
           </div>
           <div class="panel-box" id="switch-panel">
-            <h3>Switch asana / exercise</h3>
-            <div id="mini-pose-list"></div>
+            <h3 class="switch-h3"><button type="button" id="switch-toggle" class="switch-toggle" aria-expanded="false" aria-controls="mini-pose-list"><span>Switch asana / exercise</span><span class="switch-caret" aria-hidden="true">▾</span></button></h3>
+            <div class="switch-current" id="switch-current"></div>
+            <div id="mini-pose-list" hidden></div>
             <div class="nav-row" style="margin-top:6px;">
               <button class="btn-secondary" onclick="stepPose(-1)">◀ Prev</button>
               <button class="btn-secondary" onclick="stepPose(1)">Next ▶</button>
@@ -4288,7 +4298,7 @@ window.startSingle = async function(name, listContext, opts){
   document.getElementById("step-progress").style.display="none";
   document.getElementById("switch-panel").style.display="block";
   goToScreen("practice");
-  renderMiniPoseList(); updatePracticeUI();
+  setSwitchOpen(false); renderMiniPoseList(); updatePracticeUI();
   if(await openCamera()) loop();
 };
 
@@ -4357,12 +4367,37 @@ function updateSequenceUI(){
   if(step.type==='hold'){ holdSecondsTarget = step.target; document.getElementById("timer-display").textContent = `0.0s / ${holdSecondsTarget}s`; }
   if(step.type==='counter') document.getElementById("counter-display").textContent = `${counterCount} / ${step.target} reps`;
 }
+// --- Switch asana dropdown (UI only: opens/closes the list; selection logic is unchanged) ---
+function setSwitchOpen(open){
+  const toggle=document.getElementById("switch-toggle"), list=document.getElementById("mini-pose-list");
+  if(!toggle || !list) return;
+  list.hidden = !open;
+  toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  if(open){
+    const cur=list.querySelector(".mini-pose-btn.current");
+    if(cur) list.scrollTop = Math.max(0, cur.offsetTop - list.clientHeight/2 + cur.offsetHeight/2);
+  }
+}
+(function initSwitchDropdown(){
+  const toggle=document.getElementById("switch-toggle"), panel=document.getElementById("switch-panel");
+  if(!toggle || !panel) return;
+  toggle.addEventListener("click", ()=> setSwitchOpen(toggle.getAttribute("aria-expanded")!=="true"));
+  document.addEventListener("click", e=>{
+    if(toggle.getAttribute("aria-expanded")==="true" && !panel.contains(e.target)) setSwitchOpen(false);
+  });
+  document.addEventListener("keydown", e=>{
+    if(e.key==="Escape" && toggle.getAttribute("aria-expanded")==="true"){ setSwitchOpen(false); toggle.focus(); }
+  });
+})();
+// --- end Switch asana dropdown ---
 function renderMiniPoseList(){
   const wrap=document.getElementById("mini-pose-list"); wrap.innerHTML="";
+  const nowEl=document.getElementById("switch-current");
+  if(nowEl) nowEl.textContent = poseListForPractice[poseIndex] ? "Now: "+poseListForPractice[poseIndex] : "";
   poseListForPractice.forEach((pose,i)=>{
     const btn=document.createElement("button"); btn.className="mini-pose-btn"+(i===poseIndex?" current":"");
     btn.textContent=pose;
-    btn.onclick=()=>{ poseIndex=i; resetHoldAndCounter(); updatePracticeUI(); renderMiniPoseList(); };
+    btn.onclick=()=>{ poseIndex=i; resetHoldAndCounter(); updatePracticeUI(); renderMiniPoseList(); setSwitchOpen(false); };
     wrap.appendChild(btn);
   });
 }
