@@ -94,8 +94,9 @@ function findCdcInterfaces(configuration) {
   return control && data ? { control, data } : null;
 }
 
-class WebUsbCdcTransport {
-  constructor({ baudRate, bootWaitMs, onStatus, onLine, onDisconnect }) {
+export class WebUsbCdcTransport {
+  constructor({ baudRate, bootWaitMs, onStatus, onLine, onDisconnect, assertDtr = true }) {
+    this.assertDtr = assertDtr;
     this.usbApi = globalThis.navigator?.usb;
     this.baudRate = baudRate;
     this.bootWaitMs = bootWaitMs;
@@ -154,9 +155,11 @@ class WebUsbCdcTransport {
         buildLineCoding(this.baudRate),
       );
       // DTR resets the Uno, matching the Web Serial connection sequence.
+      // assertDtr=false leaves the line state at 0 so the Uno is not reset (experimental, used by the
+      // continuous-rotation mount to keep its state across a reconnect).
       await device.controlTransferOut({
         requestType: 'class', recipient: 'interface', request: SET_CONTROL_LINE_STATE,
-        value: DTR_RTS_ON, index: control.number,
+        value: this.assertDtr ? DTR_RTS_ON : 0x00, index: control.number,
       });
 
       this.readTask = this.readLoop();
@@ -208,6 +211,13 @@ class WebUsbCdcTransport {
     }
   }
 
+  async sendRaw(text) {
+    if (!this.connected || !this.device || !this.layout) throw new Error('Arduino is not connected.');
+    const result = await this.device.transferOut(this.layout.data.outEndpoint, this.encoder.encode(text));
+    if (result.status && result.status !== 'ok') throw new Error(`USB write failed (${result.status}).`);
+    return text;
+  }
+
   async sendAngles(yaw, tilt) {
     if (!this.connected || !this.device || !this.layout) throw new Error('Arduino is not connected.');
     const command = formatMountCommand(yaw, tilt);
@@ -249,7 +259,7 @@ class WebUsbCdcTransport {
   }
 }
 
-class WebSerialTransport {
+export class WebSerialTransport {
   constructor({ baudRate, bootWaitMs, onStatus, onLine, onDisconnect }) {
     this.serialApi = globalThis.navigator?.serial;
     this.baudRate = baudRate;
@@ -324,6 +334,12 @@ class WebSerialTransport {
     }
   }
 
+  async sendRaw(text) {
+    if (!this.connected || !this.writer) throw new Error('Arduino is not connected.');
+    await this.writer.write(this.encoder.encode(text));
+    return text;
+  }
+
   async sendAngles(yaw, tilt) {
     if (!this.connected || !this.writer) throw new Error('Arduino is not connected.');
     const command = formatMountCommand(yaw, tilt);
@@ -356,7 +372,7 @@ class WebSerialTransport {
   }
 }
 
-function findPersonCentre(landmarks, settings) {
+export function findPersonCentre(landmarks, settings) {
   if (!Array.isArray(landmarks)) return null;
   const points = landmarks.filter((lm) =>
     Number.isFinite(lm?.x) && Number.isFinite(lm?.y) &&

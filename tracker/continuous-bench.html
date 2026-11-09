@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a100d">
+<title>YogAI continuous-servo bench test</title>
+<style>
+  :root { --bg:#0a100d; --panel:#121b17; --panel2:#0f1612; --line:#26332d; --ink:#e8eee9; --mute:#8fa097; --teal:#4fd1b0; --gold:#dcb25f; --danger:#e57373; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:"Jost","Avenir Next","Segoe UI",system-ui,sans-serif; line-height:1.45; padding:0 0 110px; }
+  header { padding:14px 16px; border-bottom:1px solid var(--line); }
+  h1 { margin:0; font-size:1.15rem; } h2 { margin:0 0 8px; font-size:1rem; color:var(--teal); }
+  main { max-width:720px; margin:0 auto; padding:14px; display:grid; gap:12px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px; }
+  p, .hint { color:var(--mute); font-size:.88rem; margin:6px 0; }
+  .warn { border-left:3px solid var(--gold); padding-left:10px; color:#e8d5a4; }
+  button { font:inherit; color:var(--ink); background:#17231d; border:1px solid var(--line); border-radius:10px; padding:11px 14px; min-height:44px; touch-action:manipulation; }
+  button.primary { background:var(--teal); color:#062018; border-color:var(--teal); font-weight:700; }
+  button.danger { background:#3a1717; border-color:var(--danger); color:#ffd6d6; font-weight:700; }
+  button:disabled { opacity:.45; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; } .row > * { flex:1 1 130px; }
+  .pill { display:inline-block; padding:3px 10px; border-radius:99px; border:1px solid var(--line); font-size:.8rem; }
+  .pill.ok { color:var(--teal); border-color:var(--teal); } .pill.bad { color:var(--danger); border-color:var(--danger); }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  label { display:block; font-size:.82rem; color:var(--mute); } input, select { width:100%; font:inherit; color:var(--ink); background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:9px; min-height:42px; }
+  input[type=range] { padding:0; accent-color:var(--teal); }
+  .big { font-size:1.5rem; font-weight:700; color:var(--teal); font-variant-numeric:tabular-nums; }
+  .hold { user-select:none; -webkit-user-select:none; touch-action:none; }
+  #log { max-height:170px; overflow:auto; font:12px/1.4 ui-monospace,Menlo,monospace; background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:8px; white-space:pre-wrap; }
+  #stopBar { position:fixed; left:0; right:0; bottom:0; z-index:10; padding:10px 14px calc(10px + env(safe-area-inset-bottom,0)); background:rgba(10,16,13,.96); border-top:1px solid var(--danger); }
+  #stopBar button { width:100%; min-height:62px; font-size:1.25rem; }
+  .est { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+</style>
+</head>
+<body>
+<header><h1>YogAI continuous-servo bench test</h1><p>Standalone page for testing the YOGAI-CR firmware and calibrating the servos. It does not open the camera or touch YogAI.</p></header>
+<main>
+  <section>
+    <p class="warn"><strong>Before you start:</strong> upload <code>servo_tracker_continuous.ino</code> with the Arduino IDE. Take the servo horns or the phone off the stand, clear everything from the servos, and keep your hand near the big STOP ALL button. This page cannot detect a stall or an end stop.</p>
+  </section>
+
+  <section>
+    <h2>1. Connection</h2>
+    <div><span id="connPill" class="pill bad">NOT CONNECTED</span> <span id="fwPill" class="pill">firmware: unknown</span> <span id="armPill" class="pill">DISARMED</span></div>
+    <label style="margin-top:10px"><input id="noReset" type="checkbox" style="width:auto;min-height:0"> Do not reset the Arduino when connecting (experimental; may leave the servos undisturbed during connect)</label>
+    <div class="row">
+      <button id="connectAuto" class="primary">Connect Arduino</button>
+      <button id="connectUsb">Connect via WebUSB</button>
+      <button id="connectSerial">Connect via Web Serial</button>
+      <button id="disconnect" disabled>Disconnect</button>
+    </div>
+    <div class="row"><button id="arm" class="primary" disabled>Arm servos (at neutral)</button><button id="disarm" disabled>Disarm</button></div>
+    <p id="msg" role="status" aria-live="polite">Not connected.</p>
+    <p id="err" style="color:var(--danger)" role="alert" hidden></p>
+    <p class="hint">Pulses reported by the Arduino: yaw <b id="pYaw">–</b> µs · tilt <b id="pTilt">–</b> µs</p>
+  </section>
+
+  <section>
+    <h2>2. Neutral calibration (one servo at a time)</h2>
+    <p>With the servos <b>armed and stopped</b>, nudge the neutral until the servo stops creeping. Change by 1 µs steps near the end. The neutral is applied immediately.</p>
+    <div class="grid2">
+      <div><label>Yaw neutral (µs)</label><div class="big" id="nYaw">1500</div>
+        <div class="row"><button data-trim="0,-5">−5</button><button data-trim="0,-1">−1</button><button data-trim="0,1">+1</button><button data-trim="0,5">+5</button></div></div>
+      <div><label>Tilt neutral (µs)</label><div class="big" id="nTilt">1500</div>
+        <div class="row"><button data-trim="1,-5">−5</button><button data-trim="1,-1">−1</button><button data-trim="1,1">+1</button><button data-trim="1,5">+5</button></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>3. Move test (hold a button)</h2>
+    <p>"+" means a pulse longer than neutral. Note which way each servo turns; that decides the direction settings later. The stand moves only while the button is held.</p>
+    <label>Test speed <output id="spdOut">30%</output></label>
+    <input id="spd" type="range" min="5" max="100" step="5" value="30">
+    <div class="grid2" style="margin-top:8px">
+      <button class="hold" data-hold="yaw,1" disabled>Yaw +</button><button class="hold" data-hold="yaw,-1" disabled>Yaw −</button>
+      <button class="hold" data-hold="tilt,1" disabled>Tilt +</button><button class="hold" data-hold="tilt,-1" disabled>Tilt −</button>
+    </div>
+    <p class="hint">Estimated rotation from centre (approximate, drifts): yaw <b id="eYaw">0°</b> ± <span id="uYaw">0</span>° · tilt <b id="eTilt">0°</b> ± <span id="uTilt">0</span>°</p>
+    <div class="row"><button id="setCentre">Set centre here</button><button id="confirmEst" hidden>Estimate looks right</button></div>
+    <p id="estWarn" class="warn" hidden>Restored from the last session and not verified. Move the stand to its centre by eye and press "Set centre here" if it was moved.</p>
+  </section>
+
+  <section>
+    <h2>4. Speed range (per servo, per direction)</h2>
+    <p>Minimum offset = the smallest pulse change from neutral that makes the servo turn reliably. Maximum offset = where it stops getting faster. Offsets are in µs.</p>
+    <div class="grid2" id="rangeGrid"></div>
+    <div class="grid2" style="margin-top:8px">
+      <div><label>Yaw: seconds for 360° at full speed</label><input id="revYaw" type="number" min="0.5" max="120" step="0.1" value="6"></div>
+      <div><label>Tilt: seconds for 360° at full speed</label><input id="revTilt" type="number" min="0.5" max="120" step="0.1" value="6"></div>
+    </div>
+    <p class="hint">The revolution times are only used for the approximate rotation estimate. Time one turn with the stand unloaded.</p>
+    <div class="row"><button id="applyRange" disabled>Apply to Arduino</button></div>
+  </section>
+
+  <section>
+    <h2>5. Safety parameters</h2>
+    <div class="grid2">
+      <div><label>Watchdog timeout (ms)</label><input id="pWd" type="number" min="100" max="3000" step="50" value="400"></div>
+      <div><label>Max continuous run (ms)</label><input id="pRun" type="number" min="500" max="20000" step="500" value="4000"></div>
+      <div><label>Reversal pause (ms)</label><input id="pDwell" type="number" min="0" max="1000" step="50" value="150"></div>
+      <div><label>Ramp (permille/s)</label><input id="pRamp" type="number" min="200" max="20000" step="200" value="4000"></div>
+    </div>
+    <label style="margin-top:8px">When stopped</label>
+    <select id="pStop"><option value="0">Keep sending neutral pulses</option><option value="1">Stop sending pulses (detach)</option></select>
+    <div class="row"><button id="applyParams" disabled>Apply to Arduino</button><button id="wdTest" disabled>Watchdog test (silence 1.5 s)</button><button id="save" disabled>Save to Arduino (disarm first)</button></div>
+    <p class="hint">Watchdog test: while armed, the page stops sending for 1.5 s. The Arduino must stop the servos and report the watchdog. Re-arm afterwards.</p>
+  </section>
+
+  <section><h2>Log</h2><div id="log"></div></section>
+</main>
+<div id="stopBar"><button id="stopAll" class="danger">STOP ALL</button></div>
+
+<script type="module">
+import { createContinuousMount } from './continuous-mount.mjs';
+const $ = (id) => document.getElementById(id);
+const log = (m) => { const el = $('log'); el.textContent += `${new Date().toLocaleTimeString()}  ${m}\n`; el.scrollTop = el.scrollHeight; };
+let mountState = null;
+
+const mount = createContinuousMount({
+  onStatus: (m, k) => { $('msg').textContent = m; log(m); if (k === 'error') { $('err').hidden = false; $('err').textContent = m; } else if (k === 'success') $('err').hidden = true; },
+  onEvent: (e) => log(`event: ${e.type}`),
+  onState: (s) => { mountState = s; render(s); },
+});
+
+// range inputs
+const rg = $('rangeGrid');
+for (const [axis, name] of [[0, 'Yaw'], [1, 'Tilt']]) for (const [si, side] of [[0, '+'], [1, '−']]) {
+  for (const kind of ['min', 'max']) {
+    const d = document.createElement('div');
+    d.innerHTML = `<label>${name} ${side} ${kind} offset (µs)</label><input type="number" id="r_${axis}_${si}_${kind}" min="0" max="500" step="2">`;
+    rg.appendChild(d);
+  }
+}
+function fillInputs() {
+  const c = mount.getCalibration();
+  for (let a = 0; a < 2; a++) for (let s = 0; s < 2; s++) { $(`r_${a}_${s}_min`).value = c.minOff[a][s]; $(`r_${a}_${s}_max`).value = c.maxOff[a][s]; }
+  $('revYaw').value = (360 / c.dpsAtFull[0]).toFixed(1); $('revTilt').value = (360 / c.dpsAtFull[1]).toFixed(1);
+  $('pWd').value = c.watchdogMs; $('pRun').value = c.maxRunMs; $('pDwell').value = c.reversalDwellMs; $('pRamp').value = c.rampPerSec; $('pStop').value = String(c.stopMode);
+}
+fillInputs();
+
+function render(s) {
+  const connected = s.connected, armed = s.armed;
+  $('connPill').textContent = connected ? `CONNECTED (${s.transportKind === 'web-usb' ? 'WebUSB' : 'Web Serial'})` : 'NOT CONNECTED';
+  $('connPill').className = `pill ${connected ? 'ok' : 'bad'}`;
+  $('fwPill').textContent = s.handshakeOk ? 'firmware: YOGAI-CR v1' : 'firmware: unknown';
+  $('fwPill').className = `pill ${s.handshakeOk ? 'ok' : ''}`;
+  $('armPill').textContent = armed ? 'ARMED' : (s.latched ? 'STOPPED (latched)' : 'DISARMED');
+  $('armPill').className = `pill ${armed ? 'ok' : (s.latched ? 'bad' : '')}`;
+  for (const id of ['connectAuto', 'connectUsb', 'connectSerial']) $(id).disabled = connected;
+  $('disconnect').disabled = !connected;
+  $('arm').disabled = !connected || armed;
+  $('disarm').disabled = !armed;
+  document.querySelectorAll('[data-hold]').forEach((b) => { b.disabled = !armed; });
+  $('applyRange').disabled = !connected; $('applyParams').disabled = !connected;
+  $('wdTest').disabled = !armed; $('save').disabled = !connected || armed;
+  $('nYaw').textContent = s.calibration.neutralUs[0]; $('nTilt').textContent = s.calibration.neutralUs[1];
+  $('pYaw').textContent = s.pulses.yawUs ?? '–'; $('pTilt').textContent = s.pulses.tiltUs ?? '–';
+  const e = s.estimate;
+  $('eYaw').textContent = `${e.yaw.toFixed(0)}°`; $('eTilt').textContent = `${e.tilt.toFixed(0)}°`;
+  $('uYaw').textContent = e.yawUncertainty.toFixed(0); $('uTilt').textContent = e.tiltUncertainty.toFixed(0);
+  $('estWarn').hidden = !s.estimateUnverified; $('confirmEst').hidden = !s.estimateUnverified;
+}
+
+const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { $('err').hidden = false; $('err').textContent = e?.message || String(e); log(`error: ${e?.message || e}`); } };
+
+$('connectAuto').onclick = guard(() => mount.connect('auto', { resetOnConnect: !$('noReset').checked }));
+$('connectUsb').onclick = guard(() => mount.connect('web-usb', { resetOnConnect: !$('noReset').checked }));
+$('connectSerial').onclick = guard(() => mount.connect('web-serial', { resetOnConnect: true }));
+$('disconnect').onclick = guard(() => mount.disconnect());
+$('arm').onclick = guard(() => mount.arm());
+$('disarm').onclick = guard(() => mount.disarm());
+$('stopAll').onclick = () => { void mount.emergencyStop('STOP ALL pressed.'); };
+$('save').onclick = guard(() => mount.saveToArduino());
+$('setCentre').onclick = () => mount.setCentreHere();
+$('confirmEst').onclick = () => mount.confirmEstimate();
+$('wdTest').onclick = () => { log('Watchdog test: silencing speed commands for 1.5 s'); mount.pauseHeartbeat(1500); };
+document.querySelectorAll('[data-trim]').forEach((b) => { b.onclick = guard(() => { const [a, d] = b.dataset.trim.split(',').map(Number); return mount.trimNeutral(a, d); }); });
+$('spd').oninput = () => { $('spdOut').textContent = `${$('spd').value}%`; mount.setSettings({ manualSpeedPct: Number($('spd').value) }); };
+mount.setSettings({ manualSpeedPct: Number($('spd').value) });
+
+$('applyRange').onclick = guard(async () => {
+  const minOff = [[0, 0], [0, 0]], maxOff = [[0, 0], [0, 0]];
+  for (let a = 0; a < 2; a++) for (let s = 0; s < 2; s++) { minOff[a][s] = Number($(`r_${a}_${s}_min`).value); maxOff[a][s] = Number($(`r_${a}_${s}_max`).value); }
+  const dpsAtFull = [360 / Number($('revYaw').value || 6), 360 / Number($('revTilt').value || 6)];
+  await mount.setCalibration({ minOff, maxOff, dpsAtFull });
+  fillInputs();
+});
+$('applyParams').onclick = guard(async () => {
+  await mount.setCalibration({ watchdogMs: Number($('pWd').value), maxRunMs: Number($('pRun').value), reversalDwellMs: Number($('pDwell').value), rampPerSec: Number($('pRamp').value), stopMode: Number($('pStop').value) });
+  fillInputs();
+});
+
+// hold-to-move buttons: refresh the manual command while pressed, stop on release or any interruption
+let holdTimer = null;
+function holdStop() { if (holdTimer) { clearInterval(holdTimer); holdTimer = null; } mount.jogStop(); }
+document.querySelectorAll('[data-hold]').forEach((b) => {
+  const [axis, dir] = b.dataset.hold.split(',');
+  b.addEventListener('pointerdown', (e) => { e.preventDefault(); b.setPointerCapture?.(e.pointerId); holdStop(); mount.jog(axis, Number(dir)); holdTimer = setInterval(() => mount.jog(axis, Number(dir)), 100); });
+  for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture', 'pointerleave']) b.addEventListener(ev, holdStop);
+  b.addEventListener('contextmenu', (e) => e.preventDefault());
+});
+window.addEventListener('blur', holdStop);
+document.addEventListener('visibilitychange', () => { if (document.hidden) { holdStop(); if (mount.isArmed()) void mount.disarm('Page hidden: servos disarmed.'); } });
+window.addEventListener('pagehide', () => { void mount.emergencyStop('Page closed.'); });
+render(mount.getState());
+</script>
+</body>
+</html>
