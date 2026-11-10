@@ -6930,9 +6930,9 @@ initPhoneMountControls();
 const MEDITATION_ASSETS = {
   image: "",                                   // e.g. "meditation/calm.jpg"
   sounds: { brown: "meditation/brown.mp3", white: "meditation/white.mp3", rain: "meditation/rain.mp3" },
-  // Voice instructions, by pranayama name (same order as the list on screen)
+  // Voice instructions supplied for the selected pranayama practices.
+  // Anulom Vilom has no audio file in this upload, so it remains sound-only.
   instructions: {
-    "Anulom Vilom": "meditation/AnulomVilom.mp3",
     "Bhramari (Humming Bee Breath)": "meditation/Bhramri.mp3",
     "Ujjayi (Ocean Breath)": "meditation/Ujjayi.mp3",
     "Dirga Pranayama (Three-Part Breath)": "meditation/DirgaPranayama.mp3",
@@ -6943,8 +6943,8 @@ const MEDITATION_ASSETS = {
     "Sheetkari (Hissing Cooling Breath)": "meditation/Sheetkari.mp3",
     "Kapalabhati (Skull-Shining Practice)": "meditation/kapalbhati.mp3"
   },
-  fadeOutSec: 1.5,     // background sound fades out before the instruction
-  fadeInSec: 2.5,      // ...and fades back in after it
+  fadeOutSec: 1.8,     // background sound fades down before each voice instruction
+  fadeInSec: 2.8,      // background sound fades back up after the voice instruction
   noiseVolume: 1,
   voiceVolume: 1
 };
@@ -7020,18 +7020,25 @@ const MEDITATION_ASSETS = {
     const g = noiseGain.gain;
     g.cancelScheduledValues(t0); g.setValueAtTime(from, t0); g.linearRampToValueAtTime(to, t0+dur);
   }
-  // Plays the segment's voice instruction. Noise fades out first, then fades back in once it ends.
-  function playInstruction(buf, firstSegment){
-    const N = A.noiseVolume, now = ctx.currentTime;
+  // Every available voice instruction is bracketed by a noise fade:
+  // fade background down, play voice, then restore background smoothly.
+  function playInstruction(buf){
+    const N = A.noiseVolume;
+    const now = ctx.currentTime;
     if(voiceSrc){ try{ voiceSrc.stop(); }catch(e){} voiceSrc = null; }
-    if(!buf){ if(noiseGain){ ramp(N, noiseGain.gain.value, now, A.fadeInSec); } return; }
-    const out = (noiseGain && !firstSegment) ? A.fadeOutSec : 0;
-    if(noiseGain){ ramp(0, firstSegment ? 0 : noiseGain.gain.value, now, out); }
-    const vg = ctx.createGain(); vg.gain.value = A.voiceVolume;
-    voiceSrc = ctx.createBufferSource(); voiceSrc.buffer = buf; voiceSrc.connect(vg); vg.connect(ctx.destination);
-    const t0 = now + out + 0.15;
-    voiceSrc.start(t0);
-    if(noiseGain){ ramp(N, 0, t0 + buf.duration, A.fadeInSec); }
+    if(!buf) return; // No supplied voice track: leave the selected ambience running.
+    const out = noiseGain ? A.fadeOutSec : 0;
+    if(noiseGain){ ramp(0, N, now, out); }
+    const vg = ctx.createGain();
+    vg.gain.value = A.voiceVolume;
+    voiceSrc = ctx.createBufferSource();
+    voiceSrc.buffer = buf;
+    voiceSrc.connect(vg);
+    vg.connect(ctx.destination);
+    const voiceStart = now + out + 0.12;
+    const voiceEnd = voiceStart + buf.duration;
+    voiceSrc.start(voiceStart);
+    if(noiseGain){ ramp(N, 0, voiceEnd, A.fadeInSec); }
   }
   function stopAudio(fadeSec){
     const n = noiseSrc, g = noiseGain, v = voiceSrc;
@@ -7056,7 +7063,7 @@ const MEDITATION_ASSETS = {
     const q = queue[qi];
     $("med-name").textContent = q.name;
     segLeft = q.min*60; segEnd = Date.now()+segLeft*1000;
-    if(ctx) playInstruction(q.voice, qi===0);
+    if(ctx) playInstruction(q.voice);
     render();
   }
   function loop(){
