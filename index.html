@@ -1410,7 +1410,8 @@
               <button type="button" class="btn-secondary" id="ya-mount-tilt-minus" disabled>Tilt −</button>
               <button type="button" class="btn-secondary" id="ya-mount-tilt-plus" disabled>Tilt +</button>
             </div>
-            <button type="button" class="btn-secondary" id="ya-mount-centre" disabled style="width:100%;margin-top:10px;">Reset travel estimate (not physical centring)</button>
+            <button type="button" class="btn-secondary" id="ya-mount-centre" disabled style="width:100%;margin-top:10px;">Centre</button>
+            <div class="hint" id="ya-mount-centre-note">Centre marks where the stand is now as zero (yaw 0°, tilt 0°) and resets the travel limits so they count from here. The servos do not move.</div>
           </div>
           <div class="ya-mount-section">
             <h3>Automatic camera tracking</h3>
@@ -4471,7 +4472,7 @@ function refreshPhoneMountUI(){
   if(transport) transport.textContent="USB transport: "+(state?.transportKind==="web-usb"?"WebUSB":state?.transportKind==="web-serial"?"Web Serial":"not selected");
   setDisabled("ya-mount-connect",connected); setDisabled("ya-mount-connect-usb",connected); setDisabled("ya-mount-connect-serial",connected);
   setDisabled("ya-mount-disconnect",!connected); setDisabled("ya-mount-arm",!connected||armed); setDisabled("ya-mount-disarm",!connected||!armed);
-  setDisabled("ya-mount-estop",!connected); setDisabled("ya-mount-centre",!connected||armed);
+  setDisabled("ya-mount-estop",!connected); setDisabled("ya-mount-centre",!connected);
   ["ya-mount-yaw-minus","ya-mount-yaw-plus","ya-mount-tilt-minus","ya-mount-tilt-plus"].forEach(id=>setDisabled(id,!connected||!armed||tracking));
   setDisabled("ya-mount-start-tracking",!connected||!armed||!cameraOn||tracking);
   setDisabled("ya-mount-stop-tracking",!tracking);
@@ -4524,7 +4525,13 @@ function initPhoneMountControls(){
   byId("ya-mount-arm")?.addEventListener("click",async()=>{try{await phoneMount.arm();setPhoneMountMessage("ya-mount-tracking-message","Servos armed. Test a short manual movement first.","success");}catch(e){setPhoneMountMessage("ya-mount-tracking-message",e?.message||String(e),"error");}refreshPhoneMountUI();});
   byId("ya-mount-disarm")?.addEventListener("click",async()=>{try{await phoneMount.disarm();setPhoneMountMessage("ya-mount-tracking-message","Servos disarmed.","info");}catch(e){setPhoneMountMessage("ya-mount-tracking-message",e?.message||String(e),"error");}refreshPhoneMountUI();});
   byId("ya-mount-estop")?.addEventListener("click",async()=>{await phoneMount.emergencyStop("STOP ALL pressed.");setPhoneMountMessage("ya-mount-tracking-message","STOPPED and latched. Inspect the stand before arming again.","error");refreshPhoneMountUI();});
-  byId("ya-mount-centre")?.addEventListener("click",()=>{phoneMount.setCentreHere();setPhoneMountMessage("ya-mount-tracking-message","Travel estimate reset to zero only; this did not physically move the mount.","info");});
+  byId("ya-mount-centre")?.addEventListener("click",()=>{
+    const st=phoneMount.getState();
+    if(st.speeds[0]!==0||st.speeds[1]!==0){setPhoneMountMessage("ya-mount-tracking-message","Wait until the servos have stopped, then tap Centre.","error");return;}
+    phoneMount.setCentreHere(); // resets the position estimate only; nothing is sent to the Arduino, so the servos stay where they are
+    setPhoneMountMessage("ya-mount-tracking-message","Centred: this position is now zero (yaw 0°, tilt 0°) and the travel limits count from here. The servos did not move.","success");
+    refreshPhoneMountUI();
+  });
   const jogMap=[["ya-mount-yaw-minus","yaw",-1],["ya-mount-yaw-plus","yaw",1],["ya-mount-tilt-minus","tilt",-1],["ya-mount-tilt-plus","tilt",1]];
   jogMap.forEach(([id,axis,dir])=>{
     const b=byId(id);if(!b)return;let repeat=null;
