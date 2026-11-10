@@ -7010,10 +7010,23 @@ const MEDITATION_ASSETS = {
     }catch(e){ console.warn("Meditation audio not loaded:", url, e); return null; }
   }
   function startNoise(buf){
-    if(!buf) return;
-    noiseSrc = ctx.createBufferSource(); noiseSrc.buffer = buf; noiseSrc.loop = true;
-    noiseGain = ctx.createGain(); noiseGain.gain.value = 0;
-    noiseSrc.connect(noiseGain); noiseGain.connect(ctx.destination); noiseSrc.start();
+    if(!buf || !ctx) return;
+
+    noiseSrc = ctx.createBufferSource();
+    noiseSrc.buffer = buf;
+    noiseSrc.loop = true;
+
+    noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0, ctx.currentTime);
+
+    noiseSrc.connect(noiseGain);
+    noiseGain.connect(ctx.destination);
+    noiseSrc.start();
+
+    noiseGain.gain.linearRampToValueAtTime(
+      A.noiseVolume,
+      ctx.currentTime + 1.5
+    );
   }
   function ramp(to, from, t0, dur){
     if(!noiseGain) return;
@@ -7023,23 +7036,67 @@ const MEDITATION_ASSETS = {
   // Every available voice instruction is bracketed by a noise fade:
   // fade background down, play voice, then restore background smoothly.
   function playInstruction(buf){
-    const N = A.noiseVolume;
-    const now = ctx.currentTime;
-    if(voiceSrc){ try{ voiceSrc.stop(); }catch(e){} voiceSrc = null; }
-    if(!buf) return; // No supplied voice track: leave the selected ambience running.
-    const out = noiseGain ? A.fadeOutSec : 0;
-    if(noiseGain){ ramp(0, N, now, out); }
-    const vg = ctx.createGain();
-    vg.gain.value = A.voiceVolume;
-    voiceSrc = ctx.createBufferSource();
-    voiceSrc.buffer = buf;
-    voiceSrc.connect(vg);
-    vg.connect(ctx.destination);
-    const voiceStart = now + out + 0.12;
-    const voiceEnd = voiceStart + buf.duration;
-    voiceSrc.start(voiceStart);
-    if(noiseGain){ ramp(N, 0, voiceEnd, A.fadeInSec); }
-  }
+   if(!ctx || !buf) return;
+
+   const now = ctx.currentTime;
+   const fadeOut = noiseGain ? A.fadeOutSec : 0;
+
+   if(voiceSrc){
+     try {
+       voiceSrc.onended = null;
+       voiceSrc.stop();
+       voiceSrc.disconnect();
+     } catch(e){}
+     voiceSrc = null;
+   }
+
+   if(noiseGain){
+     const g = noiseGain.gain;
+ 
+     if(typeof g.cancelAndHoldAtTime === "function"){
+       g.cancelAndHoldAtTime(now);
+     } else {
+      g.cancelScheduledValues(now);
+       g.setValueAtTime(g.value, now);
+     }
+
+     g.linearRampToValueAtTime(0, now + fadeOut);
+   }
+
+   const voiceStart = now + fadeOut + 0.12;
+   const vg = ctx.createGain();
+   vg.gain.setValueAtTime(A.voiceVolume, voiceStart);
+
+   const source = ctx.createBufferSource();
+   source.buffer = buf;
+   source.connect(vg);
+   vg.connect(ctx.destination);
+
+   voiceSrc = source;
+ 
+   source.onended = () => {
+     try {
+       source.disconnect();
+       vg.disconnect();
+     } catch(e){}
+ 
+     if(voiceSrc === source) voiceSrc = null;
+ 
+     if(noiseGain && running && !paused){
+       const t = ctx.currentTime;
+       const g = noiseGain.gain;
+ 
+       g.cancelScheduledValues(t);
+       g.setValueAtTime(g.value, t);
+       g.linearRampToValueAtTime(
+         A.noiseVolume,
+         t + A.fadeInSec
+       );
+     }
+   };
+
+  source.start(voiceStart);
+ }
   function stopAudio(fadeSec){
     const n = noiseSrc, g = noiseGain, v = voiceSrc;
     noiseSrc = noiseGain = voiceSrc = null;
@@ -7080,7 +7137,24 @@ const MEDITATION_ASSETS = {
     if(!items.length || running) return;
     running = true; paused = false; const my = ++runId;
     // Audio context must be created/resumed inside the tap
-    try{ ctx = ctx || new (window.AudioContext||window.webkitAudioContext)(); if(ctx.state==="suspended") ctx.resume(); }catch(e){ ctx = null; }
+    try {
+      ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+
+      if(ctx.state === "suspended"){
+        await ctx.resume();
+      }
+
+      if(ctx.state !== "running"){
+        throw new Error("AudioContext did not start.");
+      }
+    } catch(e) {
+      console.error("Meditation audio startup failed:", e);
+      running = false;
+      $("med-start").textContent = "Start";
+      refresh();
+      alert("Audio could not start. Please check your browser audio permissions.");
+      return;
+    }
     $("med-start").disabled = true; $("med-start").textContent = "Loading…";
     let noiseBuf = null;
     if(ctx){
