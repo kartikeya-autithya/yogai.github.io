@@ -704,6 +704,34 @@
     .db-tiles { grid-template-columns:repeat(2,minmax(0,1fr)); }
   }
   @media (max-width: 700px) { .db { --db-top:62px; } .db-main { padding:12px; } .db-hero { padding:22px 18px; } .db-feature { grid-template-columns:1fr; } .db-feature-img { height:170px; } .db-tiles { grid-template-columns:1fr; } .db-action { padding:13px; min-height:150px; } }
+
+  /* ---------- MEDITATION MODE ---------- */
+  .med-sec-label { font-size:.78rem; letter-spacing:.08em; text-transform:uppercase; color:var(--text-dim); margin:22px 0 10px; }
+  .med-chips { display:flex; flex-wrap:wrap; gap:10px; }
+  .med-chip { background:#0f1612; border:1px solid var(--border); color:var(--text); border-radius:999px; padding:9px 18px; font:inherit; font-size:.92rem; cursor:pointer; }
+  .med-chip:hover { border-color:var(--accent); }
+  .med-chip.on { background:var(--accent); color:#10241a; border-color:var(--accent); font-weight:600; }
+  .med-list { display:flex; flex-direction:column; gap:8px; }
+  .med-row { display:flex; align-items:center; justify-content:space-between; gap:12px; background:#0f1612; border:1px solid var(--border); border-radius:10px; padding:12px 14px; cursor:pointer; }
+  .med-row:hover { border-color:var(--accent); }
+  .med-row.on { border-color:var(--accent); background:#15201b; }
+  .med-row .nm { flex:1; font-size:.95rem; }
+  .med-row .lv { font-size:.72rem; color:var(--text-dim); border:1px solid var(--border); border-radius:999px; padding:2px 9px; white-space:nowrap; }
+  .med-row select { background:#0a100d; color:var(--text); border:1px solid var(--border); border-radius:8px; padding:6px 8px; font:inherit; font-size:.85rem; display:none; }
+  .med-row.on select { display:block; }
+  .med-start { margin-top:24px; width:100%; padding:14px; border-radius:10px; border:1px solid var(--accent); background:var(--accent); color:#10241a; font:inherit; font-weight:700; font-size:1rem; cursor:pointer; }
+  .med-start:disabled { opacity:.4; cursor:not-allowed; }
+  .med-total-hint { margin-top:10px; text-align:center; font-size:.85rem; color:var(--text-dim); }
+  #med-session { display:none; position:fixed; inset:0; z-index:200; background:#0a100d center/cover no-repeat; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
+  #med-session.show { display:flex; }
+  #med-session::before { content:""; position:absolute; inset:0; background:linear-gradient(180deg,rgba(10,16,13,.35),rgba(10,16,13,.6)); }
+  #med-session > * { position:relative; }
+  #med-name { font-size:1rem; letter-spacing:.14em; text-transform:uppercase; color:rgba(232,238,233,.8); margin-bottom:10px; padding:0 20px; }
+  #med-timer { font-size:clamp(4.5rem,18vw,9rem); font-weight:300; letter-spacing:.04em; color:#e8eee9; font-variant-numeric:tabular-nums; line-height:1; text-shadow:0 2px 24px rgba(0,0,0,.45); }
+  #med-total { margin-top:14px; font-size:1.05rem; color:rgba(232,238,233,.75); font-variant-numeric:tabular-nums; }
+  .med-ctrls { position:absolute !important; bottom:calc(36px + env(safe-area-inset-bottom,0px)); display:flex; gap:12px; }
+  .med-ctrls button { background:rgba(18,27,23,.7); color:var(--text); border:1px solid var(--border); border-radius:999px; padding:10px 22px; font:inherit; cursor:pointer; backdrop-filter:blur(8px); }
+  .med-ctrls button:hover { border-color:var(--accent); }
 </style>
 </head>
 <body class="is-home">
@@ -885,6 +913,11 @@
         <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-2 1-3.2 2-4.2.2 1.4.9 2 1.7 2.2C10.3 8.4 10.6 5.6 12 3z"/></svg></span>
         <div class="title">Calorie Burner</div>
         <div class="desc">Push-ups, pull-ups, squats, jumping jacks, dands — with live calories</div>
+      </div>
+      <div class="home-card" tabindex="0" role="button" onclick="showMeditation()">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="6" r="2"/><path d="M12 9v4M7 17c2-1 3-3 5-4 2 1 3 3 5 4M5 20c3-1.5 5-1.5 7-1.5s4 0 7 1.5"/></svg></span>
+        <div class="title">Meditation</div>
+        <div class="desc">Pranayama with a timer and calming sound, no camera</div>
       </div>
       <div class="home-card" tabindex="0" role="button" onclick="showLearnList()">
         <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h10a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3V4z"/><path d="M5 17a3 3 0 0 1 3-3h10"/></svg></span>
@@ -1116,6 +1149,30 @@
       <div id="free-poses-list" class="pose-list"></div>
       <div class="section-label">Exercise counters</div>
       <div id="free-counters-list" class="pose-list"></div>
+    </div>
+  </div>
+
+  <!-- SCREEN: MEDITATION -->
+  <div id="meditation-screen" class="screen">
+    <div class="card">
+      <button class="back-link" onclick="goToScreen('home')"><span class="back-link-icon" aria-hidden="true">←</span><span>Back</span></button>
+      <h2>Meditation</h2>
+      <div class="med-sec-label">Background sound</div>
+      <div class="med-chips" id="med-sounds" role="group" aria-label="Background sound"></div>
+      <div class="med-sec-label">Pranayama and time</div>
+      <div class="med-list" id="med-list"></div>
+      <div class="med-total-hint" id="med-hint">Select one or more pranayamas.</div>
+      <button class="med-start" id="med-start" onclick="startMeditation()" disabled>Start</button>
+    </div>
+  </div>
+
+  <div id="med-session" role="dialog" aria-label="Meditation timer">
+    <div id="med-name"></div>
+    <div id="med-timer">00:00</div>
+    <div id="med-total">Total 00:00</div>
+    <div class="med-ctrls">
+      <button id="med-pause" onclick="toggleMeditationPause()">Pause</button>
+      <button onclick="endMeditation()">End</button>
     </div>
   </div>
 
@@ -2873,57 +2930,57 @@ function checkPose(metrics, ranges, visibility){
 }
 
 const REF_TIPS = {
-  "Tadasana (Mountain Pose)":"Stand tall, arms relaxed straight down at your sides.",
-  "Pranamasana (Prayer Pose)":"Stand tall, palms pressed together at chest.",
-  "Urdhva Hastasana (Raised Arms Pose)":"Reach both arms straight overhead.",
-  "Padangusthasana (Big Toe Pose / Forward Bend)":"Fold forward, reach hands toward feet.",
-  "Ashwa Sanchalanasana (Right Leg Back)":"Right leg back, left knee bent forward.",
-  "Ashwa Sanchalanasana (Left Leg Back)":"Left leg back, right knee bent forward.",
-  "Phalakasana (Plank Pose)":"Straight line head to heels, hands under shoulders.",
-  "Bhujangasana (Cobra Pose)":"Lying face down, press chest up, hips stay down.",
-  "Adho Mukha Svanasana (Downward Dog)":"Inverted V, hands and feet down, hips high.",
-  "Vrikshasana (Right Foot Up)":"Stand on left leg, right foot on inner left thigh.",
-  "Vrikshasana (Left Foot Up)":"Stand on right leg, left foot on inner right thigh.",
-  "Virabhadrasana II (Right Leg Forward)":"Wide stance, right knee bent 90°, arms out to sides.",
-  "Virabhadrasana II (Left Leg Forward)":"Wide stance, left knee bent 90°, arms out to sides.",
-  "Chakrasana (Wheel Pose)":"Advanced backbend, hands and feet down, chest lifted high.",
-  "Balasana (Child's Pose)":"Kneel and fold forward, arms extended.",
-  "Camel Pose (Ustrasana)":"Kneeling, lean back, reach for your heels.",
-  "Dhanurasana (Bow Pose)":"Lying face down, grab ankles, lift chest and thighs.",
-  "Hanumanasana (Monkey Pose / Splits)":"Advanced front-back split.",
-  "Urdhva Mukha Svanasana (Upward Dog)":"Chest and thighs lifted, arms straight, top of feet down.",
-  "Chaturanga Dandasana (Low Plank)":"Plank with elbows bent close to the body.",
-  "Devyasana (Goddess Pose)":"Wide stance, knees bent, arms up in a goalpost shape.",
-  "Malasana (Garland Pose)":"Deep squat, palms together at chest.",
-  "Ardha Chandrasana (Standing Side Bend)":"Standing, reach one arm up and over in a side bend.",
-  "Trikonasana (Triangle Pose)":"Wide stance, one arm reaching down, other up.",
-  "Parsvottanasana (Pyramid Pose)":"Forward fold over the front leg, staggered stance.",
-  "Anjaneyasana (Right Leg Forward)":"Low lunge, right leg forward, arms reaching up.",
-  "Anjaneyasana (Left Leg Forward)":"Low lunge, left leg forward, arms reaching up.",
-  "Skandasana (Right Leg Bent)":"Deep side lunge, weight on the bent right leg.",
-  "Skandasana (Left Leg Bent)":"Deep side lunge, weight on the bent left leg.",
-  "Push-up Counter":"Plank, bend elbows to lower, push back up.",
-  "Pull-up Counter":"Hang, pull up until elbows bend, lower fully.",
-  "Squat Counter":"Bend knees to lower hips, then stand back up.",
-  "Jumping Jacks Counter":"Jump feet apart raising arms, then back together.",
-  "Dands (Hindu Push-ups) Counter":"Swoop from hips-up (like downward dog) through to chest-up (like upward dog).",
+  "Tadasana (Mountain Pose)":"Stand upright with your feet together or hip-width apart, distributing your weight evenly across both feet. Keep your knees relaxed, spine elongated, shoulders relaxed and arms resting naturally by your sides. Look straight ahead and breathe steadily.",
+  "Pranamasana (Prayer Pose)":"Stand straight with your feet together and your weight evenly balanced. Bring both palms together in front of your chest, with fingers pointing upward. Keep your elbows relaxed, shoulders down and gaze forward.",
+  "Urdhva Hastasana (Raised Arms Pose)":"Begin in a standing position with your feet grounded and spine straight. Inhale while slowly raising both arms overhead, extending through your fingers. Keep your shoulders relaxed and avoid arching your lower back excessively.",
+  "Padangusthasana (Big Toe Pose / Forward Bend)":"Stand with your feet hip-width apart and gently bend forward from your hips. Reach towards your big toes and hold them if comfortable, keeping your back as long as possible. Bend your knees slightly if your hamstrings feel tight, and avoid pulling yourself down.",
+  "Ashwa Sanchalanasana (Right Leg Back)":"Begin in a forward fold and step your right foot backwards into a lunge. Keep your left foot forward, left knee bent and hands supported on the floor or blocks. Lift your chest slightly while keeping your hips comfortable and balanced.",
+  "Ashwa Sanchalanasana (Left Leg Back)":"Begin in a forward fold and step your left foot backwards into a lunge. Keep your right foot forward, right knee bent and hands supported on the floor or blocks. Lift your chest slightly while keeping your hips comfortable and balanced.",
+  "Phalakasana (Plank Pose)":"Begin on your hands and knees, placing your palms directly beneath your shoulders. Extend both legs backwards and balance on your hands and toes, forming a straight line from your head to your heels. Engage your abdominal muscles, keep your hips level and avoid letting your lower back sag.",
+  "Bhujangasana (Cobra Pose)":"Lie on your stomach with your legs extended and the tops of your feet resting on the floor. Place your palms beside your chest and gently lift your head and upper chest using your back muscles, with your elbows slightly bent. Keep your pelvis grounded and shoulders relaxed.",
+  "Adho Mukha Svanasana (Downward Dog)":"Start on your hands and knees with your palms shoulder-width apart. Press into your hands, lift your hips upward and backward, and form an inverted V-shape with your body. Lengthen your spine, relax your neck and bend your knees if your hamstrings feel tight.",
+  "Vrikshasana (Right Foot Up)":"Stand firmly on your left foot and slowly bend your right knee. Place your right foot against your inner left calf or thigh, avoiding the knee joint. Bring your palms together at your chest, focus on a fixed point and maintain your balance.",
+  "Vrikshasana (Left Foot Up)":"Stand firmly on your right foot and slowly bend your left knee. Place your left foot against your inner right calf or thigh, avoiding the knee joint. Bring your palms together at your chest, focus on a fixed point and maintain your balance.",
+  "Virabhadrasana II (Right Leg Forward)":"Stand with your legs wide apart and turn your right foot outward. Bend your right knee while keeping it aligned with your ankle, and extend both arms horizontally in opposite directions. Keep your torso upright and look over your right hand.",
+  "Virabhadrasana II (Left Leg Forward)":"Stand with your legs wide apart and turn your left foot outward. Bend your left knee while keeping it aligned with your ankle, and extend both arms horizontally in opposite directions. Keep your torso upright and look over your left hand.",
+  "Chakrasana (Wheel Pose)":"Lie on your back with your knees bent and feet placed firmly on the floor. Place your palms beside your ears with fingers pointing towards your shoulders. This is an advanced backbend that requires appropriate preparation and qualified instruction; do not attempt the full pose without guidance or force your back into the position.",
+  "Balasana (Child's Pose)":"Begin by kneeling on the floor and bring your big toes together, allowing your knees to remain together or comfortably apart. Slowly lower your hips towards your heels and extend your arms forward or rest them beside your body. Relax your shoulders, neck and forehead, breathing naturally.",
+  "Camel Pose (Ustrasana)":"Kneel upright with your knees approximately hip-width apart and place your hands on your hips. Gently lift your chest and draw your shoulders backwards while maintaining a comfortable position for your lower back. Reach towards your heels only if you can do so without discomfort, keeping your neck relaxed.",
+  "Dhanurasana (Bow Pose)":"Lie on your stomach with your arms beside your body. Bend your knees and reach backwards to hold your ankles, if comfortable. With appropriate guidance, gently lift your chest and thighs to create a bow-like shape, keeping your movements controlled and avoiding excessive pressure on your back.",
+  "Hanumanasana (Monkey Pose / Splits)":"Begin in a low lunge with your front foot pointing forward and your hands supporting you on the floor or blocks. Gradually extend your front leg forward and your back leg behind, keeping your hips as level as comfortably possible. Use sufficient support and never force your legs into a full split.",
+  "Urdhva Mukha Svanasana (Upward Dog)":"Lie on your stomach with your legs extended and palms placed beside your lower ribs. Press through your hands to lift your chest and thighs off the floor, keeping the tops of your feet grounded. Draw your shoulders away from your ears and maintain a comfortable backbend.",
+  "Chaturanga Dandasana (Low Plank)":"Begin in a plank position with your hands directly beneath your shoulders and your body aligned. Bend your elbows backwards, keeping them close to your ribs, and lower your body in a controlled manner. Stop at a height where you can maintain proper alignment rather than forcing yourself lower.",
+  "Devyasana (Goddess Pose)":"Stand with your feet wider than shoulder-width apart and turn your toes slightly outward. Bend both knees and lower your hips into a comfortable squat, keeping your knees aligned with your toes. Raise your arms with elbows bent and palms facing forward, maintaining an upright torso.",
+  "Malasana (Garland Pose)":"Stand with your feet slightly wider than your hips and turn your toes outward. Slowly lower your hips into a comfortable squat, bringing your palms together in front of your chest. Keep your chest lifted and elbows gently pressing against the inner knees, without forcing them outward.",
+  "Ardha Chandrasana (Standing Side Bend)":"Stand upright with your feet grounded and raise one arm overhead. Gently bend your upper body towards the opposite side while keeping your hips stable and facing forward. Avoid twisting your torso or leaning excessively.",
+  "Trikonasana (Triangle Pose)":"Stand with your legs wide apart and turn one foot outward. Extend both arms sideways, then reach towards the turned foot by hinging at the hip. Rest your hand on your shin, ankle or a suitable support, while extending the opposite arm upward and keeping your chest open.",
+  "Parsvottanasana (Pyramid Pose)":"Stand with one foot forward and the other behind, keeping your hips facing forward as much as comfortable. Straighten your legs without locking your knees and hinge forward from your hips over the front leg. Keep your spine elongated and place your hands on your legs or blocks for support.",
+  "Anjaneyasana (Right Leg Forward)":"Begin in a lunge with your right foot forward and your left knee resting on the mat. Keep your right knee approximately above your ankle and gently lower your hips while maintaining an upright torso. Raise your arms overhead if comfortable, keeping your shoulders relaxed.",
+  "Anjaneyasana (Left Leg Forward)":"Begin in a lunge with your left foot forward and your right knee resting on the mat. Keep your left knee approximately above your ankle and gently lower your hips while maintaining an upright torso. Raise your arms overhead if comfortable, keeping your shoulders relaxed.",
+  "Skandasana (Right Leg Bent)":"Stand with your legs wide apart and shift your weight towards your right foot. Bend your right knee while keeping your left leg extended comfortably, with the toes pointing upward if possible. Keep your chest lifted and use your hands on the floor or a support if needed.",
+  "Skandasana (Left Leg Bent)":"Stand with your legs wide apart and shift your weight towards your left foot. Bend your left knee while keeping your right leg extended comfortably, with the toes pointing upward if possible. Keep your chest lifted and use your hands on the floor or a support if needed.",
+  "Push-up Counter":"Begin in a high plank position with your palms slightly wider than shoulder-width apart. Keep your body aligned from head to heels, bend your elbows to lower your chest towards the floor, and push back up. Maintain a controlled movement throughout.",
+  "Pull-up Counter":"Hold a securely installed pull-up bar with both hands, using a comfortable grip. Engage your upper body and pull yourself upward until your chin approaches the bar, then lower yourself slowly with control. Use appropriate equipment and supervision.",
+  "Squat Counter":"Stand with your feet approximately shoulder-width apart and toes pointing slightly outward. Bend your hips and knees together, pushing your hips backwards as you lower into a comfortable squat. Keep your chest lifted and knees aligned with your toes, then press through your feet to return to standing.",
+  "Jumping Jacks Counter":"Stand upright with your feet together and arms resting by your sides. Jump your feet apart while simultaneously raising your arms overhead, then jump back to the starting position. Maintain a steady rhythm and land softly with slightly bent knees.",
+  "Dands (Hindu Push-ups) Counter":"Begin in a downward-dog-like position with your hips raised and hands placed firmly on the floor. Bend your elbows and sweep your chest forward and upward into a gentle backbend, then push your hips backwards to return to the starting position. Perform the movement smoothly without forcing your lower back.",
   "Tibetan Rite 1 (Spinning)":"Stand with arms out and spin clockwise for the duration shown.",
-  "Tibetan Rite 2 (Leg Raises) Counter":"Lying on your back, raise both legs to 90° then lower.",
-  "Tibetan Rite 3 (Back Stretch) Counter":"Kneeling, alternate leaning back and curling forward.",
-  "Tibetan Rite 4 (Table Stretch) Counter":"Seated, lift hips into a tabletop shape, then lower.",
-  "Tibetan Rite 5 (Updog-Downdog) Counter":"Flow between upward dog and downward dog.",
-  "Utkatasana (Chair Pose)":"Bend your knees and sit your hips back as if into a chair, chest lifted, arms up or at your chest.",
-  "Parighasana (Right Leg Extended)":"Gate Pose - kneel, extend your right leg out to the side and bend sideways over it.",
-  "Parighasana (Left Leg Extended)":"Gate Pose - kneel, extend your left leg out to the side and bend sideways over it.",
-  "Viparita Virabhadrasana (Right Leg Forward)":"Reverse Warrior - from Warrior II, right knee bent: right arm sweeps overhead, left hand rests on the back leg.",
-  "Viparita Virabhadrasana (Left Leg Forward)":"Reverse Warrior - from Warrior II, left knee bent: left arm sweeps overhead, right hand rests on the back leg.",
-  "Ardha Uttanasana (Half Lift)":"Halfway up from a forward fold: hands on shins, long flat back, gaze slightly forward.",
-  "Prasarita Padottanasana (Wide-Legged Forward Fold)":"Feet wide apart, fold forward from the hips with straight legs and a long spine.",
-  "Baddha Konasana (Bound Angle Pose)":"Seated, soles of the feet together, knees open, spine tall.",
-  "Dandasana (Staff Pose)":"Seated with legs straight out in front, spine tall, shoulders over hips.",
-  "Salamba Bhujangasana (Sphinx Pose)":"Lying on your stomach, forearms on the floor, elbows under shoulders, chest gently lifted.",
-  "Dandayamana Bharmanasana (Right Arm Forward)":"Bird Dog - on hands and knees, reach the right arm forward and the left leg back, back level.",
-  "Dandayamana Bharmanasana (Left Arm Forward)":"Bird Dog - on hands and knees, reach the left arm forward and the right leg back, back level.",
+  "Tibetan Rite 2 (Leg Raises) Counter":"Lie flat on your back with your legs extended and arms resting beside your body. Engage your abdominal muscles and raise both legs together while keeping your upper body stable. Slowly lower your legs without letting the movement become uncontrolled.",
+  "Tibetan Rite 3 (Back Stretch) Counter":"Begin kneeling upright with your knees hip-width apart and hands resting on your hips. Gently draw your shoulders backwards and lift your chest, creating a mild backward stretch through your upper body. Keep your hips steady and avoid compressing your lower back.",
+  "Tibetan Rite 4 (Table Stretch) Counter":"Sit with your knees bent and feet flat on the floor, approximately hip-width apart. Place your palms behind your hips with fingers pointing forward or slightly outward. Press through your hands and feet to lift your hips into a comfortable tabletop position, keeping your head aligned with your body.",
+  "Tibetan Rite 5 (Updog-Downdog) Counter":"Begin in a plank-like position and move into an upward-facing stretch by lifting your chest. Then push your hips backwards and upwards into Downward Dog, forming an inverted V-shape. Continue alternating between the two positions with smooth, controlled movements and steady breathing.",
+  "Utkatasana (Chair Pose)":"Stand upright with your feet together or slightly apart. Bend your knees and push your hips backward as though sitting on an imaginary chair, keeping your weight balanced through your feet. Raise your arms overhead or extend them forward, keeping your chest lifted and spine long.",
+  "Parighasana (Right Leg Extended)":"Begin kneeling upright and extend your right leg sideways, placing your foot firmly on the floor. Raise your left arm overhead and gently bend towards your extended right leg. Keep your chest open, hips facing forward and avoid collapsing your torso.",
+  "Parighasana (Left Leg Extended)":"Begin kneeling upright and extend your left leg sideways, placing your foot firmly on the floor. Raise your right arm overhead and gently bend towards your extended left leg. Keep your chest open, hips facing forward and avoid collapsing your torso.",
+  "Viparita Virabhadrasana (Right Leg Forward)":"Begin in Warrior II with your right knee bent and right foot facing forward. Raise your right arm overhead and gently lean your upper body backwards, allowing your left hand to rest lightly on your left leg. Keep your front knee aligned with your ankle and avoid compressing your lower back.",
+  "Viparita Virabhadrasana (Left Leg Forward)":"Begin in Warrior II with your left knee bent and left foot facing forward. Raise your left arm overhead and gently lean your upper body backwards, allowing your right hand to rest lightly on your right leg. Keep your front knee aligned with your ankle and avoid compressing your lower back.",
+  "Ardha Uttanasana (Half Lift)":"Begin from a standing forward fold and place your hands on your shins, thighs or blocks. Inhale and lift your chest until your back becomes elongated and nearly parallel to the floor. Keep your neck aligned with your spine and avoid rounding your back.",
+  "Prasarita Padottanasana (Wide-Legged Forward Fold)":"Stand with your feet wide apart, keeping both feet parallel or slightly turned inward. Place your hands on your hips and hinge forward from your hip joints, lowering your torso between your legs. Keep your spine elongated and bend your knees slightly if necessary.",
+  "Baddha Konasana (Bound Angle Pose)":"Sit upright with both legs extended in front of you. Bend your knees and bring the soles of your feet together, allowing your knees to relax outward. Hold your feet gently, lengthen your spine and avoid pressing your knees towards the floor.",
+  "Dandasana (Staff Pose)":"Sit on the floor with both legs extended straight in front of you and feet flexed. Place your palms beside your hips, lift your chest and lengthen your spine. Keep your shoulders relaxed and look straight ahead.",
+  "Salamba Bhujangasana (Sphinx Pose)":"Lie on your stomach and place your forearms on the floor, with elbows approximately beneath your shoulders. Gently lift your chest by pressing your forearms into the mat while keeping your pelvis and legs grounded. Keep your neck neutral and avoid forcing the backbend.",
+  "Dandayamana Bharmanasana (Right Arm Forward)":"Start on all fours with your hands beneath your shoulders and knees beneath your hips. Slowly extend your right arm forward while keeping your left hand and both knees grounded. Maintain a stable back and level hips without rotating your torso.",
+  "Dandayamana Bharmanasana (Left Arm Forward)":"Start on all fours with your hands beneath your shoulders and knees beneath your hips. Slowly extend your left arm forward while keeping your right hand and both knees grounded. Maintain a stable back and level hips without rotating your torso.",
 
 };
 
@@ -3321,6 +3378,7 @@ function recommendPoses(level, issues){
 // UI: HOME / NAVIGATION
 // ============================================================
 window.goToScreen = function(name){
+  if (name !== "meditation" && window.stopMeditationAudio) window.stopMeditationAudio(true);
   if ("speechSynthesis" in window) window.speechSynthesis.cancel(); // don't keep talking after navigating away
   // Leaving the practice screen by any route other than Stop/summary: release the camera and
   // save whatever was genuinely completed, instead of leaving the camera running in the background.
@@ -6861,6 +6919,196 @@ document.addEventListener("keydown", ev=>{
 });
 initYaExplorer();
 initPhoneMountControls();
+</script>
+<script>
+/* ============================================================
+   MEDITATION MODE (no camera). Audio files live in the meditation/ folder
+   next to index.html. Image: set a path below (leave "" for the gradient).
+   ============================================================ */
+const MEDITATION_ASSETS = {
+  image: "",                                   // e.g. "meditation/calm.jpg"
+  sounds: { brown: "meditation/brown.mp3", white: "meditation/white.mp3", rain: "meditation/rain.mp3" },
+  // Voice instructions, by pranayama name (same order as the list on screen)
+  instructions: {
+    "Anulom Vilom": "meditation/AnulomVilom.mp3",
+    "Bhramari (Humming Bee Breath)": "meditation/Bhramri.mp3",
+    "Ujjayi (Ocean Breath)": "meditation/Ujjayi.mp3",
+    "Dirga Pranayama (Three-Part Breath)": "meditation/DirgaPranayama.mp3",
+    "Sama Vritti (Equal Breathing)": "meditation/SamaVritti.mp3",
+    "Chandra Bhedana (Left Nostril Breathing)": "meditation/ChandraBhedan.mp3",
+    "Surya Bhedana (Right Nostril Breathing)": "meditation/SuryaBhedan.mp3",
+    "Sheetali (Cooling Breath)": "meditation/Sheetali.mp3",
+    "Sheetkari (Hissing Cooling Breath)": "meditation/Sheetkari.mp3",
+    "Kapalabhati (Skull-Shining Practice)": "meditation/kapalbhati.mp3"
+  },
+  fadeOutSec: 1.5,     // background sound fades out before the instruction
+  fadeInSec: 2.5,      // ...and fades back in after it
+  noiseVolume: 1,
+  voiceVolume: 1
+};
+(function(){
+  const PRANAYAMAS = [
+    ["Anulom Vilom","Beginner"],["Bhramari (Humming Bee Breath)","Beginner"],["Ujjayi (Ocean Breath)","Beginner"],
+    ["Dirga Pranayama (Three-Part Breath)","Beginner"],["Sama Vritti (Equal Breathing)","Beginner"],
+    ["Chandra Bhedana (Left Nostril Breathing)","Intermediate"],["Surya Bhedana (Right Nostril Breathing)","Intermediate"],
+    ["Sheetali (Cooling Breath)","Intermediate"],["Sheetkari (Hissing Cooling Breath)","Intermediate"],
+    ["Kapalabhati (Skull-Shining Practice)","Advanced"]
+  ];
+  const DURATIONS = [1,2,3,5,10,15,20,30];
+  const SOUNDS = [["none","None"],["brown","Brown noise"],["white","White noise"],["rain","Rain and thunder"]];
+  const $ = id => document.getElementById(id);
+  const sel = {};
+  let sound = "none";
+  let queue = [], qi = 0, segEnd = 0, segLeft = 0, tick = null, paused = false, running = false, wake = null, runId = 0;
+
+  const fmt = sec => { sec = Math.max(0, Math.ceil(sec)); return String(Math.floor(sec/60)).padStart(2,"0")+":"+String(sec%60).padStart(2,"0"); };
+
+  function buildUI(){
+    const sc = $("med-sounds"); sc.innerHTML = "";
+    SOUNDS.forEach(([k,l])=>{
+      const b = document.createElement("button"); b.type="button"; b.className="med-chip"+(k===sound?" on":""); b.textContent=l;
+      b.onclick = ()=>{ sound=k; [...sc.children].forEach(c=>c.classList.toggle("on", c===b)); };
+      sc.appendChild(b);
+    });
+    const list = $("med-list"); list.innerHTML = "";
+    PRANAYAMAS.forEach(([name,level],i)=>{
+      const row = document.createElement("div"); row.className="med-row"+(i in sel?" on":""); row.tabIndex=0; row.setAttribute("role","button");
+      const nm = document.createElement("span"); nm.className="nm"; nm.textContent=name;
+      const lv = document.createElement("span"); lv.className="lv"; lv.textContent=level;
+      const dd = document.createElement("select"); dd.setAttribute("aria-label","Minutes for "+name);
+      DURATIONS.forEach(m=>{ const o=document.createElement("option"); o.value=m; o.textContent=m+" min"; dd.appendChild(o); });
+      dd.value = sel[i] || 5;
+      dd.onclick = e=>e.stopPropagation();
+      dd.onchange = ()=>{ sel[i]=+dd.value; refresh(); };
+      const toggle = ()=>{ if(i in sel) delete sel[i]; else sel[i]=+dd.value; row.classList.toggle("on", i in sel); refresh(); };
+      row.onclick = toggle;
+      row.onkeydown = e=>{ if((e.key==="Enter"||e.key===" ") && e.target===row){ e.preventDefault(); toggle(); } };
+      row.append(nm,lv,dd); list.appendChild(row);
+    });
+    refresh();
+  }
+  function refresh(){
+    const n = Object.keys(sel).length, tot = Object.values(sel).reduce((a,b)=>a+b,0);
+    $("med-start").disabled = n===0;
+    $("med-hint").textContent = n ? n+" selected · total "+tot+" min" : "Select one or more pranayamas.";
+  }
+  window.showMeditation = function(){ buildUI(); goToScreen("meditation"); };
+
+  /* ---------- audio (all on one Web Audio clock so pause/resume stays in sync) ---------- */
+  const A = MEDITATION_ASSETS;
+  let ctx = null, noiseSrc = null, noiseGain = null, voiceSrc = null;
+  const cache = {};
+  async function load(url){
+    if(!url) return null;
+    if(cache[url]) return cache[url];
+    try{
+      const r = await fetch(url); if(!r.ok) throw new Error(r.status);
+      const buf = await ctx.decodeAudioData(await r.arrayBuffer());
+      return cache[url] = buf;
+    }catch(e){ console.warn("Meditation audio not loaded:", url, e); return null; }
+  }
+  function startNoise(buf){
+    if(!buf) return;
+    noiseSrc = ctx.createBufferSource(); noiseSrc.buffer = buf; noiseSrc.loop = true;
+    noiseGain = ctx.createGain(); noiseGain.gain.value = 0;
+    noiseSrc.connect(noiseGain); noiseGain.connect(ctx.destination); noiseSrc.start();
+  }
+  function ramp(to, from, t0, dur){
+    if(!noiseGain) return;
+    const g = noiseGain.gain;
+    g.cancelScheduledValues(t0); g.setValueAtTime(from, t0); g.linearRampToValueAtTime(to, t0+dur);
+  }
+  // Plays the segment's voice instruction. Noise fades out first, then fades back in once it ends.
+  function playInstruction(buf, firstSegment){
+    const N = A.noiseVolume, now = ctx.currentTime;
+    if(voiceSrc){ try{ voiceSrc.stop(); }catch(e){} voiceSrc = null; }
+    if(!buf){ if(noiseGain){ ramp(N, noiseGain.gain.value, now, A.fadeInSec); } return; }
+    const out = (noiseGain && !firstSegment) ? A.fadeOutSec : 0;
+    if(noiseGain){ ramp(0, firstSegment ? 0 : noiseGain.gain.value, now, out); }
+    const vg = ctx.createGain(); vg.gain.value = A.voiceVolume;
+    voiceSrc = ctx.createBufferSource(); voiceSrc.buffer = buf; voiceSrc.connect(vg); vg.connect(ctx.destination);
+    const t0 = now + out + 0.15;
+    voiceSrc.start(t0);
+    if(noiseGain){ ramp(N, 0, t0 + buf.duration, A.fadeInSec); }
+  }
+  function stopAudio(fadeSec){
+    const n = noiseSrc, g = noiseGain, v = voiceSrc;
+    noiseSrc = noiseGain = voiceSrc = null;
+    try{ if(v) v.stop(); }catch(e){}
+    if(!n) return;
+    if(fadeSec && g && ctx){
+      const t = ctx.currentTime; g.gain.cancelScheduledValues(t); g.gain.setValueAtTime(g.gain.value,t); g.gain.linearRampToValueAtTime(0,t+fadeSec);
+      setTimeout(()=>{ try{ n.stop(); n.disconnect(); g.disconnect(); }catch(e){} }, fadeSec*1000+100);
+    } else { try{ n.stop(); n.disconnect(); if(g) g.disconnect(); }catch(e){} }
+  }
+
+  /* ---------- session ---------- */
+  function render(){
+    const now = Date.now();
+    const seg = paused ? segLeft : Math.max(0,(segEnd-now)/1000);
+    const rest = queue.slice(qi+1).reduce((a,q)=>a+q.min*60,0);
+    $("med-timer").textContent = fmt(seg);
+    $("med-total").textContent = "Total " + fmt(seg+rest);
+  }
+  function beginSegment(){
+    const q = queue[qi];
+    $("med-name").textContent = q.name;
+    segLeft = q.min*60; segEnd = Date.now()+segLeft*1000;
+    if(ctx) playInstruction(q.voice, qi===0);
+    render();
+  }
+  function loop(){
+    if(paused) return;
+    if(Date.now() >= segEnd){
+      qi++;
+      if(qi >= queue.length){ cleanup(true); return; }
+      beginSegment();
+    }
+    render();
+  }
+  window.startMeditation = async function(){
+    const items = Object.keys(sel).map(Number).sort((a,b)=>a-b).map(i=>({name:PRANAYAMAS[i][0],min:sel[i]}));
+    if(!items.length || running) return;
+    running = true; paused = false; const my = ++runId;
+    // Audio context must be created/resumed inside the tap
+    try{ ctx = ctx || new (window.AudioContext||window.webkitAudioContext)(); if(ctx.state==="suspended") ctx.resume(); }catch(e){ ctx = null; }
+    $("med-start").disabled = true; $("med-start").textContent = "Loading…";
+    let noiseBuf = null;
+    if(ctx){
+      noiseBuf = sound!=="none" ? await load(A.sounds[sound]) : null;
+      for(const it of items) it.voice = await load(A.instructions[it.name]);
+    }
+    $("med-start").textContent = "Start"; refresh();
+    if(my !== runId || !running) return;
+    queue = items; qi = 0;
+    $("med-pause").textContent = "Pause";
+    const img = A.image;
+    $("med-session").style.backgroundImage = img ? 'url("'+img+'")' : "radial-gradient(circle at 30% 20%,#1d3a2e,#0d1511 70%)";
+    $("med-session").classList.add("show");
+    document.body.style.overflow = "hidden";
+    if(ctx) startNoise(noiseBuf);
+    beginSegment();
+    clearInterval(tick); tick = setInterval(loop,250);
+    try{ if(navigator.wakeLock) navigator.wakeLock.request("screen").then(w=>wake=w).catch(()=>{}); }catch(e){}
+  };
+  window.toggleMeditationPause = function(){
+    if(!running) return;
+    if(!paused){ segLeft = Math.max(0,(segEnd-Date.now())/1000); paused = true; if(ctx) ctx.suspend(); $("med-pause").textContent="Resume"; }
+    else { segEnd = Date.now()+segLeft*1000; paused = false; if(ctx) ctx.resume(); $("med-pause").textContent="Pause"; }
+    render();
+  };
+  function cleanup(gentle){
+    clearInterval(tick); tick = null; running = false; runId++;
+    if(ctx && ctx.state==="suspended") ctx.resume();
+    stopAudio(gentle ? 2 : 0);
+    paused = false;
+    $("med-session").classList.remove("show");
+    document.body.style.overflow = "";
+    try{ if(wake){ wake.release(); wake=null; } }catch(e){}
+  }
+  window.endMeditation = function(){ cleanup(false); };
+  window.stopMeditationAudio = function(){ if(running || tick) cleanup(false); };
+})();
 </script>
 </body>
 </html>
