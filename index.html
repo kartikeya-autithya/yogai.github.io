@@ -4640,8 +4640,12 @@ function caloriesForReps(exerciseName, reps){ return (CALORIE_K[exerciseName]||0
 function loop(){
   rafId = requestAnimationFrame(loop);
   if(!landmarker || videoEl.readyState<2) return;
-  if(phoneMount && phoneMount.isConnected()){ const _n=performance.now(); if(_n-(loop._t||0)<50) return; loop._t=_n; } // tracker connected: cap pose at ~20 fps so USB timers are not starved
+  // Tracker connected: keep pose inference to at most ~1/3 of main-thread time so USB heartbeat timers are not starved.
+  const _mountOn = !!(phoneMount && phoneMount.isConnected());
+  if(_mountOn && performance.now() < (loop._next||0)) return;
+  const _t0 = performance.now();
   const result = landmarker.detectForVideo(videoEl, performance.now());
+  if(_mountOn){ const _t1=performance.now(); loop._next = _t1 + Math.max(50, (_t1-_t0)*2); }
   ctx.clearRect(0,0,canvasEl.width,canvasEl.height);
 
   let currentName;

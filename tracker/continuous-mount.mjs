@@ -80,7 +80,7 @@ export function createContinuousMount({
   autoLoop = true,
   handshakeTimeoutMs = 700,
   requestTimeoutMs = 700,
-  writeTimeoutMs = 300,   // a speed command that cannot be written in this time is treated as a USB fault
+  writeTimeoutMs = 800,   // a speed command that cannot be written in this time is treated as a USB fault
   rxTimeoutMs = 1500,     // while armed the firmware sends ST lines 5x/s; silence this long means the link is dead (0 = off)
 } = {}) {
   let settings = sanitizeCrSettings(readJson(storage, SETTINGS_KEY) ?? {});
