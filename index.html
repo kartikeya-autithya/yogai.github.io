@@ -6406,12 +6406,12 @@ const DB_ICONS = {
   build:["M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z","M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10z"], bookmark:["M6 3h12v18l-6-4-6 4z"],
   pose:["M12 3.8a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 0 0 0-4.4z","M12 9v6","M7 11l5-3 5 3","M9 21l3-6 3 6"],
   flame:["M12 3c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-2 1-3.2 2-4.2.2 1.4.9 2 1.7 2.2C10.3 8.4 10.6 5.6 12 3z"],
-  meditate:["M12 3.8a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 0 0 0-4.4z","M12 9v4","M7 17c2-1 3-3 5-4 2 1 3 3 5 4","M5 20c3-1.5 5-1.5 7-1.5s4 0 7 1.5"],
   book:["M5 4h10a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3V4z","M5 17a3 3 0 0 1 3-3h10"], chat:["M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4A8 8 0 1 1 20 12z"],
   message:["M4 5h16v11H9l-5 4z","M8 9h8","M8 12h5"], chart:["M4 20V10","M10 20V4","M16 20v-8","M22 20H2"],
   heart:["M12 21s-7-4.4-9.5-9A5.5 5.5 0 0 1 12 6.5 5.5 5.5 0 0 1 21.5 12C19 16.6 12 21 12 21z"], user:["M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z","M4 21a8 8 0 0 1 16 0"],
   gear:["M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z","M12 3v2.5","M12 18.5V21","M3 12h2.5","M18.5 12H21","M5.6 5.6l1.8 1.8","M16.6 16.6l1.8 1.8","M5.6 18.4l1.8-1.8","M16.6 7.4l1.8-1.8"],
   sparkle:["M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z","M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"],
+  meditate:["M12 4a2 2 0 1 0 0 4 2 2 0 0 0 0-4z","M12 9v4","M6 17c2.5-.5 4-2.2 6-4 2 1.8 3.5 3.5 6 4","M4 20c3-1.2 5-1.2 8-1.2s5 0 8 1.2"],
   star:["M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"]
 };
 let dbMsgBadge = null;
@@ -6440,8 +6440,7 @@ function dbNavSpec(){
   return [
     ["Practice", [["home", "Home", () => { if(typeof window.scrollTo === "function") window.scrollTo(0, 0); }, true], ["play", "Today's practice", () => startTodayPractice()],
       ["routine", "Workout routines", () => goToScreen("routines")], ["build", "Personal routine", () => goToScreen("intake")],
-      ["bookmark", "Saved routines", () => openSavedRoutines()], ["pose", "Free exercise", () => showFreeExercise()], ["flame", "Calorie burner", () => goToScreen("calorie")],
-      ["meditate", "Meditation", () => showMeditation()]]],
+      ["bookmark", "Saved routines", () => openSavedRoutines()], ["pose", "Free exercise", () => showFreeExercise()], ["flame", "Calorie burner", () => goToScreen("calorie")], ["meditate", "Meditation", () => showMeditation()]]],
     ["Learn", [["pose", "Pose explorer", () => yaNav("explore")], ["book", "Yog Kriya notes", () => showLearnList()], ["chat", "Yoga Assistant", () => showChat()]]],
     ["You", [["message", "Messages", () => showMessages(), false, true], ["chart", "Progress", () => showProgressScreen()], ["heart", "Favorites", () => showFavoritesScreen()],
       ["user", "Profile", () => showAccountScreen()], ["gear", "Settings", () => showSettings()]]]
@@ -6560,6 +6559,7 @@ function dbExplore(c){
    ["bookmark", "Saved routines", saved, () => openSavedRoutines()],
    ["pose", "Free exercise", "Pick any single asana and go", () => showFreeExercise()],
    ["flame", "Calorie burner", "Push-ups, squats and more with live calories", () => goToScreen("calorie")],
+   ["meditate", "Meditation", "Pranayama with a timer and calming sound", () => showMeditation()],
    ["book", "Yog Kriya notes", "Your own notes, videos and audio", () => showLearnList()]
   ].forEach(([ico, title, sub, fn]) => {
     const b = dbBtn("db-tile", null, fn), i = dbEl("span", "db-tile-ico"); i.appendChild(dbIcon(ico));
@@ -6930,9 +6930,9 @@ initPhoneMountControls();
 const MEDITATION_ASSETS = {
   image: "",                                   // e.g. "meditation/calm.jpg"
   sounds: { brown: "meditation/brown.mp3", white: "meditation/white.mp3", rain: "meditation/rain.mp3" },
-  // Voice instructions supplied for the selected pranayama practices.
-  // Anulom Vilom has no audio file in this upload, so it remains sound-only.
+  // Voice instructions, by pranayama name (same order as the list on screen)
   instructions: {
+    "Anulom Vilom": "meditation/AnulomVilom.mp3",
     "Bhramari (Humming Bee Breath)": "meditation/Bhramri.mp3",
     "Ujjayi (Ocean Breath)": "meditation/Ujjayi.mp3",
     "Dirga Pranayama (Three-Part Breath)": "meditation/DirgaPranayama.mp3",
@@ -6943,8 +6943,8 @@ const MEDITATION_ASSETS = {
     "Sheetkari (Hissing Cooling Breath)": "meditation/Sheetkari.mp3",
     "Kapalabhati (Skull-Shining Practice)": "meditation/kapalbhati.mp3"
   },
-  fadeOutSec: 1.8,     // background sound fades down before each voice instruction
-  fadeInSec: 2.8,      // background sound fades back up after the voice instruction
+  fadeOutSec: 1.5,     // background sound fades out before the instruction
+  fadeInSec: 2.5,      // ...and fades back in after it
   noiseVolume: 1,
   voiceVolume: 1
 };
@@ -7010,93 +7010,29 @@ const MEDITATION_ASSETS = {
     }catch(e){ console.warn("Meditation audio not loaded:", url, e); return null; }
   }
   function startNoise(buf){
-    if(!buf || !ctx) return;
-
-    noiseSrc = ctx.createBufferSource();
-    noiseSrc.buffer = buf;
-    noiseSrc.loop = true;
-
-    noiseGain = ctx.createGain();
-    noiseGain.gain.setValueAtTime(0, ctx.currentTime);
-
-    noiseSrc.connect(noiseGain);
-    noiseGain.connect(ctx.destination);
-    noiseSrc.start();
-
-    noiseGain.gain.linearRampToValueAtTime(
-      A.noiseVolume,
-      ctx.currentTime + 1.5
-    );
+    if(!buf) return;
+    noiseSrc = ctx.createBufferSource(); noiseSrc.buffer = buf; noiseSrc.loop = true;
+    noiseGain = ctx.createGain(); noiseGain.gain.value = 0;
+    noiseSrc.connect(noiseGain); noiseGain.connect(ctx.destination); noiseSrc.start();
   }
   function ramp(to, from, t0, dur){
     if(!noiseGain) return;
     const g = noiseGain.gain;
     g.cancelScheduledValues(t0); g.setValueAtTime(from, t0); g.linearRampToValueAtTime(to, t0+dur);
   }
-  // Every available voice instruction is bracketed by a noise fade:
-  // fade background down, play voice, then restore background smoothly.
-  function playInstruction(buf){
-   if(!ctx || !buf) return;
-
-   const now = ctx.currentTime;
-   const fadeOut = noiseGain ? A.fadeOutSec : 0;
-
-   if(voiceSrc){
-     try {
-       voiceSrc.onended = null;
-       voiceSrc.stop();
-       voiceSrc.disconnect();
-     } catch(e){}
-     voiceSrc = null;
-   }
-
-   if(noiseGain){
-     const g = noiseGain.gain;
- 
-     if(typeof g.cancelAndHoldAtTime === "function"){
-       g.cancelAndHoldAtTime(now);
-     } else {
-      g.cancelScheduledValues(now);
-       g.setValueAtTime(g.value, now);
-     }
-
-     g.linearRampToValueAtTime(0, now + fadeOut);
-   }
-
-   const voiceStart = now + fadeOut + 0.12;
-   const vg = ctx.createGain();
-   vg.gain.setValueAtTime(A.voiceVolume, voiceStart);
-
-   const source = ctx.createBufferSource();
-   source.buffer = buf;
-   source.connect(vg);
-   vg.connect(ctx.destination);
-
-   voiceSrc = source;
- 
-   source.onended = () => {
-     try {
-       source.disconnect();
-       vg.disconnect();
-     } catch(e){}
- 
-     if(voiceSrc === source) voiceSrc = null;
- 
-     if(noiseGain && running && !paused){
-       const t = ctx.currentTime;
-       const g = noiseGain.gain;
- 
-       g.cancelScheduledValues(t);
-       g.setValueAtTime(g.value, t);
-       g.linearRampToValueAtTime(
-         A.noiseVolume,
-         t + A.fadeInSec
-       );
-     }
-   };
-
-  source.start(voiceStart);
- }
+  // Plays the segment's voice instruction. Noise fades out first, then fades back in once it ends.
+  function playInstruction(buf, firstSegment){
+    const N = A.noiseVolume, now = ctx.currentTime;
+    if(voiceSrc){ try{ voiceSrc.stop(); }catch(e){} voiceSrc = null; }
+    if(!buf){ if(noiseGain){ ramp(N, noiseGain.gain.value, now, A.fadeInSec); } return; }
+    const out = (noiseGain && !firstSegment) ? A.fadeOutSec : 0;
+    if(noiseGain){ ramp(0, firstSegment ? 0 : noiseGain.gain.value, now, out); }
+    const vg = ctx.createGain(); vg.gain.value = A.voiceVolume;
+    voiceSrc = ctx.createBufferSource(); voiceSrc.buffer = buf; voiceSrc.connect(vg); vg.connect(ctx.destination);
+    const t0 = now + out + 0.15;
+    voiceSrc.start(t0);
+    if(noiseGain){ ramp(N, 0, t0 + buf.duration, A.fadeInSec); }
+  }
   function stopAudio(fadeSec){
     const n = noiseSrc, g = noiseGain, v = voiceSrc;
     noiseSrc = noiseGain = voiceSrc = null;
@@ -7120,7 +7056,7 @@ const MEDITATION_ASSETS = {
     const q = queue[qi];
     $("med-name").textContent = q.name;
     segLeft = q.min*60; segEnd = Date.now()+segLeft*1000;
-    if(ctx) playInstruction(q.voice);
+    if(ctx) playInstruction(q.voice, qi===0);
     render();
   }
   function loop(){
@@ -7137,24 +7073,7 @@ const MEDITATION_ASSETS = {
     if(!items.length || running) return;
     running = true; paused = false; const my = ++runId;
     // Audio context must be created/resumed inside the tap
-    try {
-      ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
-
-      if(ctx.state === "suspended"){
-        await ctx.resume();
-      }
-
-      if(ctx.state !== "running"){
-        throw new Error("AudioContext did not start.");
-      }
-    } catch(e) {
-      console.error("Meditation audio startup failed:", e);
-      running = false;
-      $("med-start").textContent = "Start";
-      refresh();
-      alert("Audio could not start. Please check your browser audio permissions.");
-      return;
-    }
+    try{ ctx = ctx || new (window.AudioContext||window.webkitAudioContext)(); if(ctx.state==="suspended") ctx.resume(); }catch(e){ ctx = null; }
     $("med-start").disabled = true; $("med-start").textContent = "Loading…";
     let noiseBuf = null;
     if(ctx){
