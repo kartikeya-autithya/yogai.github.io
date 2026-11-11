@@ -77,6 +77,8 @@ export function createContinuousMount({
   autoLoop = true,
   handshakeTimeoutMs = 700,
   requestTimeoutMs = 700,
+  writeTimeoutMs = 300,   // a speed command that cannot be written in this time is treated as a USB fault
+  rxTimeoutMs = 1500,     // while armed the firmware sends ST lines 5x/s; silence this long means the link is dead (0 = off)
 } = {}) {
   let settings = sanitizeCrSettings(readJson(storage, SETTINGS_KEY) ?? {});
   let calibration = sanitizeCalibration(readJson(storage, CALIBRATION_KEY) ?? {});
@@ -107,6 +109,15 @@ export function createContinuousMount({
   const pending = new Map();
   let readyWaiter = null;
   let heartbeatPausedUntil = 0;
+  let lastRxMs = 0;
+  let lastInvalidReady = null;
+  let tickFaultReported = false;
+  const diag = [];
+  function log(dir, text) {
+    diag.push(`${Math.round(now())} ${dir} ${JSON.stringify(String(text).slice(0, 80))}`);
+    if (diag.length > 120) diag.shift();
+  }
+  const hexOf = (text) => [...String(text)].map((c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join(' ');
 
   const emit = () => onState(getState());
 
@@ -123,6 +134,7 @@ export function createContinuousMount({
   function writeLine(text) {
     if (!transport?.connected) return Promise.reject(new Error('Arduino is not connected.'));
     const t = transport;
+    log('TX', text.trim());
     sendChain = sendChain.catch(() => {}).then(() => t.sendRaw(text));
     return sendChain;
   }
@@ -139,11 +151,19 @@ export function createContinuousMount({
   }
 
   function handleLine(rawLine) {
+    lastRxMs = now();
+    log('RX', rawLine);
     const r = parseReply(rawLine);
     switch (r.type) {
       case 'ready':
         bootInfo = r;
+        // A READY line while armed means the Arduino restarted (power dip, reset): it is disarmed now.
+        if (armed) stopEverything('The Arduino restarted while armed (power dip or reset?). Servos are disarmed. Check the supply, then arm again.', { latched: true });
         if (readyWaiter) { readyWaiter(r); readyWaiter = null; }
+        break;
+      case 'ready-invalid':
+        lastInvalidReady = r.line;
+        if (readyWaiter) { readyWaiter({ invalid: true, line: r.line }); readyWaiter = null; }
         break;
       case 'positional-ready':
         sawPositional = true;
@@ -160,7 +180,7 @@ export function createContinuousMount({
       case 'err': {
         const p = pending.get(r.seq);
         if (p) { clearTimeout(p.timer); pending.delete(r.seq); p.reject(new Error(`Arduino: ${r.text}.`)); }
-        else onStatus(`Arduino reported an error: ${r.text}.`, 'error');
+        else onStatus(`Arduino reported an error (code ${r.code}, command #${r.seq}): ${r.text}.`, 'error');
         break;
       }
       case 'status':
@@ -249,23 +269,38 @@ export function createContinuousMount({
     const dt = lastTickMs === null ? TICK_MS : clamp(t - lastTickMs, 1, 200);
     lastTickMs = t;
 
-    let targets = [0, 0];
-    if (tracking) {
-      const r = controller.compute(t, { estimate: estimator.get() });
-      targets = [r.yaw, r.tilt];
-      trackStatus = r.status;
-    } else if (manualUntil > t) {
-      targets = applySoftLimits(manual, estimator.get(), settings).speeds;
+    if (rxTimeoutMs > 0 && lastRxMs > 0 && t - lastRxMs > rxTimeoutMs) {
+      stopEverything(`No data from the Arduino for ${Math.round((t - lastRxMs) / 100) / 10} s. Servo control stopped. Check the USB cable, then arm again.`, { latched: true });
+      void emergencyStopBestEffort();
+      return;
     }
 
-    speeds = shaper.step(targets, t, dt);
-    estimator.step(0, speeds[0], dt);
-    estimator.step(1, speeds[1], dt);
-    persistEstimate();
+    // The heartbeat must survive a failure in the control maths: on any error fall back to zero speed and still send.
+    try {
+      let targets = [0, 0];
+      if (tracking) {
+        const r = controller.compute(t, { estimate: estimator.get() });
+        targets = [r.yaw, r.tilt];
+        trackStatus = r.status;
+      } else if (manualUntil > t) {
+        targets = applySoftLimits(manual, estimator.get(), settings).speeds;
+      }
+      speeds = shaper.step(targets, t, dt);
+      estimator.step(0, speeds[0], dt);
+      estimator.step(1, speeds[1], dt);
+      persistEstimate();
+    } catch (error) {
+      speeds = [0, 0];
+      shaper.reset();
+      if (!tickFaultReported) { tickFaultReported = true; onStatus(`Control calculation failed (${error?.message || error}); sending zero speed.`, 'error'); }
+    }
 
     if (t < heartbeatPausedUntil) return; // bench test only: lets the firmware watchdog prove itself
     try {
-      await writeLine(commands.velocity(nextSeqValue(), speeds[0], speeds[1]));
+      const write = writeLine(commands.velocity(nextSeqValue(), speeds[0], speeds[1]));
+      let timer;
+      const stalled = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`USB write stalled for more than ${writeTimeoutMs} ms`)), writeTimeoutMs); });
+      try { await Promise.race([write, stalled]); } finally { clearTimeout(timer); }
     } catch (error) {
       stopEverything(`Could not send a speed command (${error?.message || error}). Servos stopped.`, { latched: true });
       void emergencyStopBestEffort();
@@ -291,17 +326,26 @@ export function createContinuousMount({
   }
 
   async function handshake() {
-    if (sawPositional) throw new Error('This Arduino is running the positional servo firmware. Upload servo_tracker_continuous.ino (YOGAI-CR) before using continuous-rotation servos.');
+    // A boot banner that arrived while the port was opening is NOT trusted: it may be partial or stale.
+    // Always ask explicitly (I,seq) and validate the fresh answer.
+    bootInfo = null;
+    lastInvalidReady = null;
+    const positionalMsg = 'This Arduino is running the positional servo firmware. Upload servo_tracker_continuous.ino (YOGAI-CR) before using continuous-rotation servos.';
+    if (sawPositional) throw new Error(positionalMsg);
     for (let attempt = 0; attempt < 3 && !bootInfo; attempt += 1) {
       const wait = new Promise((resolve) => { readyWaiter = resolve; setTimeout(() => { if (readyWaiter === resolve) readyWaiter = null; resolve(null); }, handshakeTimeoutMs); });
-      seq = nextSeq(seq);
-      await writeLine(commands.identify(seq));
+      await writeLine(commands.identify(nextSeqValue()));
       const reply = await wait;
       if (reply?.positional) sawPositional = true;
-      if (sawPositional) throw new Error('This Arduino is running the positional servo firmware. Upload servo_tracker_continuous.ino (YOGAI-CR) before using continuous-rotation servos.');
-      if (reply && reply.name) break;
+      if (sawPositional) throw new Error(positionalMsg);
+      if (reply && reply.name) { bootInfo = reply; break; }
     }
-    if (!bootInfo) throw new Error('No YOGAI-CR firmware answered. Upload servo_tracker_continuous.ino and reconnect.');
+    if (!bootInfo) {
+      if (lastInvalidReady !== null) {
+        throw new Error(`The Arduino answered the identify command with something unreadable. Expected "READY,${PROTOCOL.name},${PROTOCOL.version}" but received ${JSON.stringify(lastInvalidReady)} (hex ${hexOf(lastInvalidReady)}). Unplug and reconnect the Arduino, then retry.`);
+      }
+      throw new Error('No YOGAI-CR firmware answered. Upload servo_tracker_continuous.ino and reconnect.');
+    }
     if (bootInfo.name !== PROTOCOL.name || bootInfo.version !== PROTOCOL.version) {
       throw new Error(`Firmware ${bootInfo.name} v${bootInfo.version} does not match this app (${PROTOCOL.name} v${PROTOCOL.version}).`);
     }
@@ -331,6 +375,8 @@ export function createContinuousMount({
     transportKind = selected;
     sawPositional = false;
     bootInfo = null;
+    lastInvalidReady = null;
+    diag.length = 0;
     const callbacks = {
       baudRate: 115200,
       bootWaitMs: resetOnConnect ? 2500 : 300,
@@ -345,6 +391,7 @@ export function createContinuousMount({
     try {
       await transport.connect();
       connected = true;
+      lastRxMs = now();
       await handshake();
       await uploadCalibration();
       const saved = readJson(storage, ESTIMATE_KEY);
@@ -387,6 +434,8 @@ export function createContinuousMount({
     await request((id) => commands.arm(id));
     armed = true;
     latched = false;
+    lastRxMs = now();
+    tickFaultReported = false;
     startLoop();
     onStatus('Servos armed at neutral. Manual jogs and tracking are available.', 'success');
     emit();
@@ -499,6 +548,7 @@ export function createContinuousMount({
     jog, jogStop, setManual, startTracking, stopTracking, updateFromLandmarks,
     setSettings, setCalibration, trimNeutral, saveToArduino, setCentreHere, confirmEstimate, pauseHeartbeat,
     tick, getState,
+    getDiagnostics: () => diag.join('\n'),
     isConnected: () => connected,
     isArmed: () => armed,
     isTracking: () => tracking,

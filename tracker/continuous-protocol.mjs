@@ -80,7 +80,11 @@ export function parseReply(rawLine) {
   const num = (s) => (/^-?\d+$/.test(s ?? '') ? Number(s) : NaN);
   switch (p[0]) {
     case 'READY':
-      return p.length === 3 ? { type: 'ready', name: p[1], version: num(p[2]) } : { type: 'unknown', line };
+      // A READY line is accepted only if it has a name and an integer version. Anything else is reported as
+      // 'ready-invalid' with the raw text so the app can show exactly what arrived (never a NaN version).
+      return p.length === 3 && p[1] !== '' && Number.isInteger(num(p[2]))
+        ? { type: 'ready', name: p[1], version: num(p[2]) }
+        : { type: 'ready-invalid', line };
     case 'OK':
       return Number.isFinite(num(p[1])) ? { type: 'ok', seq: num(p[1]) } : { type: 'unknown', line };
     case 'ERR':

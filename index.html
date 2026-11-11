@@ -1443,6 +1443,8 @@
             <button type="button" class="btn-danger" id="ya-mount-disconnect" disabled>Disconnect</button>
           </div>
           <div id="ya-mount-connection-message" class="hint" role="status" aria-live="polite">Not connected. Connect the Uno over USB-OTG (Android) or USB (desktop).</div>
+          <button type="button" class="btn-ghost" id="ya-mount-show-log">Show USB log</button>
+          <pre id="ya-mount-log" class="hint" hidden style="white-space:pre-wrap;word-break:break-all;max-height:14em;overflow:auto;font-size:11px;"></pre>
           <div class="ya-mount-angle-grid">
             <div class="ya-mount-angle-tile"><span>Yaw · estimated travel</span><strong id="ya-mount-yaw">0°</strong></div>
             <div class="ya-mount-angle-tile"><span>Tilt · estimated travel</span><strong id="ya-mount-tilt">0°</strong></div>
@@ -4580,6 +4582,7 @@ function initPhoneMountControls(){
   byId("ya-mount-connect-usb")?.addEventListener("click",connect("web-usb"));
   byId("ya-mount-connect-serial")?.addEventListener("click",connect("web-serial"));
   byId("ya-mount-disconnect")?.addEventListener("click",async()=>{try{await phoneMount.disconnect();}catch(e){setPhoneMountMessage("ya-mount-connection-message",e?.message||String(e),"error");}refreshPhoneMountUI();});
+  byId("ya-mount-show-log")?.addEventListener("click",()=>{const pre=byId("ya-mount-log");if(!pre)return;pre.hidden=!pre.hidden;if(!pre.hidden){pre.textContent=phoneMount.getDiagnostics()||"(no USB traffic recorded yet)";}});
   byId("ya-mount-arm")?.addEventListener("click",async()=>{try{await phoneMount.arm();setPhoneMountMessage("ya-mount-tracking-message","Servos armed. Test a short manual movement first.","success");}catch(e){setPhoneMountMessage("ya-mount-tracking-message",e?.message||String(e),"error");}refreshPhoneMountUI();});
   byId("ya-mount-disarm")?.addEventListener("click",async()=>{try{await phoneMount.disarm();setPhoneMountMessage("ya-mount-tracking-message","Servos disarmed.","info");}catch(e){setPhoneMountMessage("ya-mount-tracking-message",e?.message||String(e),"error");}refreshPhoneMountUI();});
   byId("ya-mount-estop")?.addEventListener("click",async()=>{await phoneMount.emergencyStop("STOP ALL pressed.");setPhoneMountMessage("ya-mount-tracking-message","STOPPED and latched. Inspect the stand before arming again.","error");refreshPhoneMountUI();});
