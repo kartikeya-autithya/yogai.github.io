@@ -33,6 +33,9 @@ const SETTINGS_KEY = 'yogai.cr.settings.v1';
 const CALIBRATION_KEY = 'yogai.cr.calibration.v1';
 const ESTIMATE_KEY = 'yogai.cr.estimate.v1';
 const TICK_MS = 50;
+// Measured on an Android phone running the camera + pose model: the page can stall for 400+ ms, longer than the
+// firmware's 400 ms default. The watchdog is kept (never disabled) but given a realistic floor.
+const WATCHDOG_FLOOR_MS = 1000;
 const MANUAL_HOLD_MS = 500;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -266,6 +269,7 @@ export function createContinuousMount({
 
   async function tickInner() {
     const t = now();
+    if (lastTickMs !== null && t - lastTickMs > 200) log('STALL', `${Math.round(t - lastTickMs)} ms since previous tick`);
     const dt = lastTickMs === null ? TICK_MS : clamp(t - lastTickMs, 1, 200);
     lastTickMs = t;
 
@@ -361,7 +365,7 @@ export function createContinuousMount({
         await request((id) => commands.range(id, axis, dir, c.minOff[axis][si], c.maxOff[axis][si]));
       }
     }
-    await request((id) => commands.param(id, 'watchdogMs', c.watchdogMs));
+    await request((id) => commands.param(id, 'watchdogMs', Math.max(c.watchdogMs, WATCHDOG_FLOOR_MS)));
     await request((id) => commands.param(id, 'reversalDwellMs', c.reversalDwellMs));
     await request((id) => commands.param(id, 'rampPerSec', c.rampPerSec));
     await request((id) => commands.param(id, 'maxRunMs', c.maxRunMs));
@@ -431,7 +435,10 @@ export function createContinuousMount({
     if (armed) return;
     shaper.reset();
     controller.reset();
-    await request((id) => commands.arm(id));
+    const armAck = request((id) => commands.arm(id));
+    // Queue a zero-speed command directly behind Arm so the watchdog is fed at once, without waiting for the OK round trip.
+    writeLine(commands.velocity(nextSeqValue(), 0, 0)).catch(() => {});
+    await armAck;
     armed = true;
     latched = false;
     lastRxMs = now();

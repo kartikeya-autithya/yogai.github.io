@@ -4582,7 +4582,7 @@ function initPhoneMountControls(){
   byId("ya-mount-connect-usb")?.addEventListener("click",connect("web-usb"));
   byId("ya-mount-connect-serial")?.addEventListener("click",connect("web-serial"));
   byId("ya-mount-disconnect")?.addEventListener("click",async()=>{try{await phoneMount.disconnect();}catch(e){setPhoneMountMessage("ya-mount-connection-message",e?.message||String(e),"error");}refreshPhoneMountUI();});
-  byId("ya-mount-show-log")?.addEventListener("click",()=>{const pre=byId("ya-mount-log");if(!pre)return;pre.hidden=!pre.hidden;if(!pre.hidden){pre.textContent=phoneMount.getDiagnostics()||"(no USB traffic recorded yet)";}});
+  byId("ya-mount-show-log")?.addEventListener("click",()=>{const pre=byId("ya-mount-log");if(!pre)return;pre.hidden=!pre.hidden;clearInterval(window.__yaLogTimer);if(!pre.hidden){const draw=()=>{const end=pre.scrollHeight-pre.scrollTop-pre.clientHeight<30;pre.textContent=phoneMount.getDiagnostics()||"(no USB traffic recorded yet)";if(end)pre.scrollTop=pre.scrollHeight;};draw();window.__yaLogTimer=setInterval(draw,500);}});
   byId("ya-mount-arm")?.addEventListener("click",async()=>{try{await phoneMount.arm();setPhoneMountMessage("ya-mount-tracking-message","Servos armed. Test a short manual movement first.","success");}catch(e){setPhoneMountMessage("ya-mount-tracking-message",e?.message||String(e),"error");}refreshPhoneMountUI();});
   byId("ya-mount-disarm")?.addEventListener("click",async()=>{try{await phoneMount.disarm();setPhoneMountMessage("ya-mount-tracking-message","Servos disarmed.","info");}catch(e){setPhoneMountMessage("ya-mount-tracking-message",e?.message||String(e),"error");}refreshPhoneMountUI();});
   byId("ya-mount-estop")?.addEventListener("click",async()=>{await phoneMount.emergencyStop("STOP ALL pressed.");setPhoneMountMessage("ya-mount-tracking-message","STOPPED and latched. Inspect the stand before arming again.","error");refreshPhoneMountUI();});
@@ -4640,6 +4640,7 @@ function caloriesForReps(exerciseName, reps){ return (CALORIE_K[exerciseName]||0
 function loop(){
   rafId = requestAnimationFrame(loop);
   if(!landmarker || videoEl.readyState<2) return;
+  if(phoneMount && phoneMount.isConnected()){ const _n=performance.now(); if(_n-(loop._t||0)<50) return; loop._t=_n; } // tracker connected: cap pose at ~20 fps so USB timers are not starved
   const result = landmarker.detectForVideo(videoEl, performance.now());
   ctx.clearRect(0,0,canvasEl.width,canvasEl.height);
 
