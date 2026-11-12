@@ -6506,7 +6506,7 @@ function dbChips(c){
 function dbHero(c){
   const h = dbEl("section", "db-hero");
   // Green-toned hero: a green layer is blended in "color" mode over the photo, with a lighter dark gradient on top for text contrast.
-  h.style.backgroundImage = "linear-gradient(90deg,rgba(10,16,13,.92),rgba(18,27,23,.62),rgba(18,27,23,.12)), linear-gradient(#2f9e6a,#2f9e6a), url('" + YA_PX(6453400) + "')";
+  h.style.backgroundImage = "linear-gradient(90deg,rgba(10,16,13,.92),rgba(18,27,23,.62),rgba(18,27,23,.12)), linear-gradient(#2f9e6a,#2f9e6a), url('assets/yogai-dashboard-mountain.jpg')";
   h.style.backgroundBlendMode = "normal, color, normal";
   h.appendChild(dbEl("h1", "", greetingWord() + ", " + c.name));
   h.appendChild(dbEl("p", "db-hero-line", dbHeroLine(c)));
