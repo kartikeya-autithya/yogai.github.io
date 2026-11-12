@@ -6493,7 +6493,9 @@ function dbChips(c){
 }
 function dbHero(c){
   const h = dbEl("section", "db-hero");
-  h.style.backgroundImage = "linear-gradient(90deg,rgba(10,16,13,.96),rgba(18,27,23,.82),rgba(18,27,23,.3)), url('" + YA_PX(6453400) + "')";
+  // Green-toned hero: a green layer is blended in "color" mode over the photo, with a lighter dark gradient on top for text contrast.
+  h.style.backgroundImage = "linear-gradient(90deg,rgba(10,16,13,.92),rgba(18,27,23,.62),rgba(18,27,23,.12)), linear-gradient(#2f9e6a,#2f9e6a), url('" + YA_PX(6453400) + "')";
+  h.style.backgroundBlendMode = "normal, color, normal";
   h.appendChild(dbEl("h1", "", greetingWord() + ", " + c.name));
   h.appendChild(dbEl("p", "db-hero-line", dbHeroLine(c)));
   const chips = dbEl("div", "db-chips"); dbChips(c).forEach(t => chips.appendChild(dbEl("span", "ya-chip", t))); h.appendChild(chips);
