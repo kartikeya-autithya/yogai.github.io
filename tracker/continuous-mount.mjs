@@ -12,7 +12,7 @@
 import { WebUsbCdcTransport, WebSerialTransport, findPersonCentre } from './arduino-mount.mjs';
 import { commands, parseReply, nextSeq, PROTOCOL } from './continuous-protocol.mjs';
 import {
-  CR_SETTINGS_DEFAULTS, sanitizeCrSettings, createVelocityController, createSpeedShaper, applySoftLimits,
+  CR_SETTINGS_DEFAULTS, CR_SETTINGS_REV, CR_RETUNED_KEYS, sanitizeCrSettings, createVelocityController, createSpeedShaper, applySoftLimits,
 } from './continuous-controller.mjs';
 import { createTravelEstimator } from './travel-estimate.mjs';
 
@@ -24,7 +24,7 @@ export const CR_CALIBRATION_DEFAULTS = Object.freeze({
   tables: [null, null],              // optional measured [{permille, dps}] per axis
   watchdogMs: 400,
   maxRunMs: 4000,
-  reversalDwellMs: 150,
+  reversalDwellMs: 50,
   rampPerSec: 4000,
   stopMode: 0,
 });
@@ -36,6 +36,8 @@ const TICK_MS = 50;
 // Measured on an Android phone running the camera + pose model: the page can stall for 400+ ms, longer than the
 // firmware's 400 ms default. The watchdog is kept (never disabled) but given a realistic floor.
 const WATCHDOG_FLOOR_MS = 1000;
+// Firmware pause at neutral on a direction reversal. The speed ramp still brings the servo to neutral first.
+const REVERSAL_DWELL_MS = 50;
 const MANUAL_HOLD_MS = 500;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -83,7 +85,11 @@ export function createContinuousMount({
   writeTimeoutMs = 800,   // a speed command that cannot be written in this time is treated as a USB fault
   rxTimeoutMs = 1500,     // while armed the firmware sends ST lines 5x/s; silence this long means the link is dead (0 = off)
 } = {}) {
-  let settings = sanitizeCrSettings(readJson(storage, SETTINGS_KEY) ?? {});
+  // Settings saved by an older tuning revision lose the retuned keys (they fall back to the new defaults); sliders the
+  // user set (dead zone, speed caps, ...) are kept.
+  const savedSettings = readJson(storage, SETTINGS_KEY) ?? {};
+  if (savedSettings.settingsRev !== CR_SETTINGS_REV) for (const k of CR_RETUNED_KEYS) delete savedSettings[k];
+  let settings = sanitizeCrSettings(savedSettings);
   let calibration = sanitizeCalibration(readJson(storage, CALIBRATION_KEY) ?? {});
   const controller = createVelocityController(settings);
   const shaper = createSpeedShaper({ rampPerSec: settings.rampPerSec, dwellMs: settings.dwellMs });
@@ -366,7 +372,7 @@ export function createContinuousMount({
       }
     }
     await request((id) => commands.param(id, 'watchdogMs', Math.max(c.watchdogMs, WATCHDOG_FLOOR_MS)));
-    await request((id) => commands.param(id, 'reversalDwellMs', c.reversalDwellMs));
+    await request((id) => commands.param(id, 'reversalDwellMs', Math.min(c.reversalDwellMs, REVERSAL_DWELL_MS)));
     await request((id) => commands.param(id, 'rampPerSec', c.rampPerSec));
     await request((id) => commands.param(id, 'maxRunMs', c.maxRunMs));
     await request((id) => commands.param(id, 'stopMode', c.stopMode));
