@@ -13,7 +13,7 @@ import { WebUsbCdcTransport, WebSerialTransport, findPersonCentre } from './ardu
 import { commands, parseReply, nextSeq, PROTOCOL } from './continuous-protocol.mjs';
 import {
   CR_SETTINGS_DEFAULTS, sanitizeCrSettings, createVelocityController, createSpeedShaper, applySoftLimits,
-} from './continuous-controller.mjs';
+} from './continuous-controller-slow.mjs';
 import { createTravelEstimator } from './travel-estimate.mjs';
 
 export const CR_CALIBRATION_DEFAULTS = Object.freeze({
@@ -85,8 +85,26 @@ export function createContinuousMount({
   writeTimeoutMs = 800,   // a speed command that cannot be written in this time is treated as a USB fault
   rxTimeoutMs = 1500,     // while armed the firmware sends ST lines 5x/s; silence this long means the link is dead (0 = off)
 } = {}) {
+  const SLOW_SETTINGS_MARKER = 'yogai.cr.slow-tuning.v1';
   const savedSettings = readJson(storage, SETTINGS_KEY) ?? {};
-  let settings = sanitizeCrSettings(savedSettings);
+  const slowSettingsApplied = readJson(storage, SLOW_SETTINGS_MARKER) === true;
+
+  const settingsToLoad = slowSettingsApplied
+    ? savedSettings
+    : {
+        ...savedSettings,
+        gainYaw: CR_SETTINGS_DEFAULTS.gainYaw,
+        gainTilt: CR_SETTINGS_DEFAULTS.gainTilt,
+        maxSpeedPct: CR_SETTINGS_DEFAULTS.maxSpeedPct,
+        dwellMs: CR_SETTINGS_DEFAULTS.dwellMs,
+      };
+
+  let settings = sanitizeCrSettings(settingsToLoad);
+
+  if (!slowSettingsApplied) {
+    writeJson(storage, SETTINGS_KEY, settings);
+    writeJson(storage, SLOW_SETTINGS_MARKER, true);
+  }
   let calibration = sanitizeCalibration(readJson(storage, CALIBRATION_KEY) ?? {});
   let controller = createVelocityController(settings);
   const shaper = createSpeedShaper({ rampPerSec: settings.rampPerSec, dwellMs: settings.dwellMs });
