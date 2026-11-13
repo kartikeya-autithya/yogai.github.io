@@ -32,7 +32,7 @@ export const CR_CALIBRATION_DEFAULTS = Object.freeze({
 const SETTINGS_KEY = 'yogai.cr.settings.v1';
 const CALIBRATION_KEY = 'yogai.cr.calibration.v1';
 const ESTIMATE_KEY = 'yogai.cr.estimate.v1';
-const TICK_MS = 50;
+const TICK_MS = 25;
 // Measured on an Android phone running the camera + pose model: the page can stall for 400+ ms, longer than the
 // firmware's 400 ms default. The watchdog is kept (never disabled) but given a realistic floor.
 const WATCHDOG_FLOOR_MS = 1000;
@@ -85,7 +85,7 @@ export function createContinuousMount({
   writeTimeoutMs = 800,   // a speed command that cannot be written in this time is treated as a USB fault
   rxTimeoutMs = 1500,     // while armed the firmware sends ST lines 5x/s; silence this long means the link is dead (0 = off)
 } = {}) {
-  const SLOW_SETTINGS_MARKER = 'yogai.cr.slow-tuning.v1';
+  const SLOW_SETTINGS_MARKER = 'yogai.cr.slow-tuning.v2';
   const savedSettings = readJson(storage, SETTINGS_KEY) ?? {};
   const slowSettingsApplied = readJson(storage, SLOW_SETTINGS_MARKER) === true;
 
@@ -281,6 +281,12 @@ export function createContinuousMount({
     if (loopTimer !== null) { clearInterval(loopTimer); loopTimer = null; }
   }
 
+  const TRACK_PULSE_MS = 100;
+  const TRACK_PAUSE_MS = 100;
+  let trackingPulseActive = false;
+  let trackingPulseStartedAt = 0;
+  let trackingPulsePauseUntil = 0;
+
   let ticking = false;
   async function tick() {
     if (!armed || !connected || ticking) return;
@@ -305,10 +311,36 @@ export function createContinuousMount({
       let targets = [0, 0];
       if (tracking) {
         const r = controller.compute(t, { estimate: estimator.get() });
-        targets = [r.yaw, r.tilt];
+        const requested = [r.yaw, r.tilt];
+        const hasDemand = requested.some(v => Math.abs(v) > 0);
+
+        if (!hasDemand) {
+          trackingPulseActive = false;
+          targets = [0, 0];
+        } else if (
+          trackingPulseActive &&
+          t - trackingPulseStartedAt < TRACK_PULSE_MS
+        ) {
+          targets = requested;
+        } else if (trackingPulseActive) {
+          trackingPulseActive = false;
+          trackingPulsePauseUntil = t + TRACK_PAUSE_MS;
+          targets = [0, 0];
+        } else if (t >= trackingPulsePauseUntil) {
+          trackingPulseActive = true;
+          trackingPulseStartedAt = t;
+          targets = requested;
+        } else {
+          targets = [0, 0];
+        }
         trackStatus = r.status;
       } else if (manualUntil > t) {
+        trackingPulseActive = false;
+        trackingPulsePauseUntil = 0;
         targets = applySoftLimits(manual, estimator.get(), settings).speeds;
+      } else {
+        trackingPulseActive = false;
+        trackingPulsePauseUntil = 0;
       }
       speeds = shaper.step(targets, t, dt);
       estimator.step(0, speeds[0], dt);

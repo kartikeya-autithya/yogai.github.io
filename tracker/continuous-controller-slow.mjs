@@ -9,13 +9,13 @@ export const CR_SETTINGS_DEFAULTS = Object.freeze({
   deadZone: 0.06,        // outer band: movement starts when |error| exceeds this (fraction of frame)
   innerFraction: 0.6,    // movement stops when |error| falls below deadZone * innerFraction
   emaAlpha: 0.5,
-  gainYaw: 1.5,          // P: speed fraction per unit of image error beyond the inner band
-  gainTilt: 1.5,
+  gainYaw: 0.7,          // P: speed fraction per unit of image error beyond the inner band
+  gainTilt: 0.7,
   kd: 0.5,               // D: speed fraction removed per (frame fraction / second) of closing speed; damps overshoot
   ki: 0,                 // I: speed fraction per accumulated error (frame fraction * s); 0 = off, see README note
   integralLimit: 0.1,    // anti-windup: the I term can never exceed this speed fraction
   staleDecayMs: 200,     // speed fades to zero this long after the last fresh detection (do not act on stale error)
-  maxSpeedPct: 20,       // cap, percent of the calibrated speed range
+  maxSpeedPct: 10,       // cap, percent of the calibrated speed range
   minSpeedPct: 3,        // floor while moving (the firmware adds its own minimum-move offset)
   rampPerSec: 3000,      // permille per second; keep at or below the firmware ramp
   dwellMs: 350,          // pause at neutral on a direction reversal; keep above the firmware dwell
