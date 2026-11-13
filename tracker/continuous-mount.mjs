@@ -12,7 +12,7 @@
 import { WebUsbCdcTransport, WebSerialTransport, findPersonCentre } from './arduino-mount.mjs';
 import { commands, parseReply, nextSeq, PROTOCOL } from './continuous-protocol.mjs';
 import {
-  CR_SETTINGS_DEFAULTS, CR_SETTINGS_REV, CR_RETUNED_KEYS, sanitizeCrSettings, createTrackingController, createSpeedShaper, applySoftLimits,
+  CR_SETTINGS_DEFAULTS, sanitizeCrSettings, createVelocityController, createSpeedShaper, applySoftLimits,
 } from './continuous-controller.mjs';
 import { createTravelEstimator } from './travel-estimate.mjs';
 
@@ -85,13 +85,10 @@ export function createContinuousMount({
   writeTimeoutMs = 800,   // a speed command that cannot be written in this time is treated as a USB fault
   rxTimeoutMs = 1500,     // while armed the firmware sends ST lines 5x/s; silence this long means the link is dead (0 = off)
 } = {}) {
-  // Settings saved by an older tuning revision lose the retuned keys (they fall back to the new defaults); sliders the
-  // user set (dead zone, speed caps, ...) are kept.
   const savedSettings = readJson(storage, SETTINGS_KEY) ?? {};
-  if (savedSettings.settingsRev !== CR_SETTINGS_REV) for (const k of CR_RETUNED_KEYS) delete savedSettings[k];
   let settings = sanitizeCrSettings(savedSettings);
   let calibration = sanitizeCalibration(readJson(storage, CALIBRATION_KEY) ?? {});
-  let controller = createTrackingController(settings);
+  let controller = createVelocityController(settings);
   const shaper = createSpeedShaper({ rampPerSec: settings.rampPerSec, dwellMs: settings.dwellMs });
   const estimator = createTravelEstimator({ dpsAtFull: calibration.dpsAtFull, tables: calibration.tables });
 
@@ -516,15 +513,14 @@ export function createContinuousMount({
     if (!tracking || !connected) return null;
     const centre = findPersonCentre(landmarks, settings);
     if (!centre) return null;
-    controller.observe({ x: centre.x, y: centre.y, t: timestampMs });
+    controller.observe({ x: centre.x, y: centre.y, t: now() });
     return centre;
   }
 
   // ------------------------------------------------------------ settings and calibration
   function setSettings(next = {}) {
     settings = sanitizeCrSettings({ ...settings, ...next });
-    if ((settings.trackMode >= 0.5) !== (controller.getSettings().trackMode >= 0.5)) controller = createTrackingController(settings);
-    else controller.setSettings(settings);
+    controller.setSettings(settings);
     shaper.setParams({ rampPerSec: settings.rampPerSec, dwellMs: settings.dwellMs });
     writeJson(storage, SETTINGS_KEY, settings);
     emit();

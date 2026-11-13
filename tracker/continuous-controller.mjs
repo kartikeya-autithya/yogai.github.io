@@ -9,31 +9,17 @@ export const CR_SETTINGS_DEFAULTS = Object.freeze({
   deadZone: 0.06,        // outer band: movement starts when |error| exceeds this (fraction of frame)
   innerFraction: 0.6,    // movement stops when |error| falls below deadZone * innerFraction
   emaAlpha: 0.5,
-  gainYaw: 1.0,          // P: speed fraction per unit of image error beyond the inner band (with delay compensation a lower gain is smoother)
-  gainTilt: 1.0,
-  kd: 0,                 // D on the tracked velocity (off: the delay compensation already provides the damping)
+  gainYaw: 3.0,          // P: speed fraction per unit of image error beyond the inner band
+  gainTilt: 3.0,
+  kd: 0.5,               // D: speed fraction removed per (frame fraction / second) of closing speed; damps overshoot
   ki: 0,                 // I: speed fraction per accumulated error (frame fraction * s); 0 = off, see README note
   integralLimit: 0.1,    // anti-windup: the I term can never exceed this speed fraction
-  staleDecayMs: 300,     // the speed fades out over this window ending at lostMs (do not act on very stale predictions)
-  captureDelayMs: 250,   // camera frame -> pose result age when a detection arrives
-  actuationDelayMs: 100, // speed command -> physical motion (USB + ramp)
-  fovYawDeg: 50,         // approx. horizontal field of view of the phone camera (portrait); converts degrees to frame fractions
-  fovTiltDeg: 65,        // approx. vertical field of view
-  smithScale: 1.0,       // 0..1.5: how much of the already-commanded camera motion is subtracted from a stale measurement
-  plantGainInit: 2.0,    // starting guess of (real picture shift / modelled shift) until it is learned; >1 is the cautious side
-  trackMode: 1,          // 1 = look-move-wait pulses (default, no overshoot on a delayed loop); 0 = continuous delay-compensated PID
-  pulseSpeedPct: 30,     // look-move-wait: speed of a correction pulse (% of full)
-  pulseFraction: 0.8,    // look-move-wait: fraction of the remaining error one pulse aims to remove (<1 = undershoot)
-  minPulseMs: 40,
-  maxPulseMs: 1200,
-  probePulseMs: 250,     // the first pulse is a short probe until the real pulse rate has been measured
-  speedSmoothMs: 100,    // low-pass on the commanded speed (removes steps when a new detection arrives)
-  settingsRev: 3,        // bumped when defaults are retuned; older saved values of the retuned keys are dropped
+  staleDecayMs: 200,     // speed fades to zero this long after the last fresh detection (do not act on stale error)
   maxSpeedPct: 50,       // cap, percent of the calibrated speed range
   minSpeedPct: 3,        // floor while moving (the firmware adds its own minimum-move offset)
   rampPerSec: 3000,      // permille per second; keep at or below the firmware ramp
-  dwellMs: 50,           // pause at neutral on a direction reversal; the firmware dwell is set to the same value
-  lostMs: 800,           // no fresh detection for this long -> speeds go to zero (prediction bridges the gap before that)
+  dwellMs: 200,          // pause at neutral on a direction reversal; keep above the firmware dwell
+  lostMs: 250,           // no fresh detection for this long -> speeds go to zero
   reacquireResetMs: 700,
   yawDirection: 1,
   tiltDirection: 1,
@@ -45,17 +31,13 @@ export const CR_SETTINGS_DEFAULTS = Object.freeze({
   minBboxFraction: 0.05,
 });
 
-export const CR_SETTINGS_REV = 4;
-// Keys whose defaults were retuned in this revision; a phone that saved the old values gets the new defaults.
-export const CR_RETUNED_KEYS = Object.freeze(['gainYaw', 'gainTilt', 'lostMs', 'dwellMs', 'staleDecayMs', 'kd', 'ki', 'integralLimit', 'captureDelayMs', 'actuationDelayMs', 'fovYawDeg', 'fovTiltDeg', 'smithScale', 'plantGainInit', 'speedSmoothMs', 'trackMode', 'pulseSpeedPct', 'pulseFraction', 'minPulseMs', 'maxPulseMs', 'probePulseMs']);
-
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const sign = (v) => (v > 0 ? 1 : v < 0 ? -1 : 0);
 
 const RANGES = Object.freeze({
-  deadZone: [0.02, 0.25], captureDelayMs: [0, 1500], actuationDelayMs: [0, 1000], fovYawDeg: [10, 120], fovTiltDeg: [10, 120], smithScale: [0, 1.5], plantGainInit: [0.5, 3], speedSmoothMs: [0, 500], trackMode: [0, 1], pulseSpeedPct: [5, 100], pulseFraction: [0.2, 1], minPulseMs: [20, 500], maxPulseMs: [100, 3000], probePulseMs: [50, 1000], innerFraction: [0.3, 0.95], emaAlpha: [0.15, 0.9],
+  deadZone: [0.02, 0.25], innerFraction: [0.3, 0.95], emaAlpha: [0.15, 0.9],
   gainYaw: [0.5, 8], gainTilt: [0.5, 8], kd: [0, 5], ki: [0, 2], integralLimit: [0, 0.3], staleDecayMs: [50, 1000], maxSpeedPct: [5, 100], minSpeedPct: [0, 20],
-  rampPerSec: [200, 4000], dwellMs: [50, 1000], lostMs: [100, 1500], reacquireResetMs: [200, 3000],
+  rampPerSec: [200, 4000], dwellMs: [150, 1000], lostMs: [100, 1500], reacquireResetMs: [200, 3000],
   softLimitYawDeg: [5, 360], softLimitTiltDeg: [5, 180], manualSpeedPct: [5, 100],
   minVisibility: [0.1, 1], minVisibleLandmarks: [1, 33], minBboxFraction: [0.01, 1],
 });
@@ -78,45 +60,23 @@ export function createVelocityController(initial = {}) {
   let fx = null;
   let fy = null;
   let lastObsMs = null;
-  let lastComputeMs = null;
-  // Per axis: PID state, a filtered velocity of the image error, the output low-pass and a short history of the
-  // estimated mount position. The history lets a stale measurement be corrected for the camera motion that has been
-  // commanded since the picture was taken (Smith-predictor style ego-motion compensation): without it the controller
-  // keeps commanding a correction that is already under way, and a delayed loop overshoots and oscillates.
-  const mk = () => ({ moving: false, v: 0, i: 0, prevErr: null, lp: 0, hist: [], q: s.plantGainInit, rawErr: null, rawT: null });
-  const ax = mk();
-  const ay = mk();
+  // Per-axis PID state. The plant is an integrator (speed -> position), so P+D does the work; I is optional.
+  const ax = { moving: false, d: 0, i: 0, prevErr: null };
+  const ay = { moving: false, d: 0, i: 0, prevErr: null };
 
-  function resetAxis(a) { a.moving = false; a.v = 0; a.i = 0; a.prevErr = null; a.lp = 0; a.rawErr = null; a.rawT = null; }   // a.q (learned plant gain) is a property of the mount and survives
-  function reset() { fx = null; fy = null; lastObsMs = null; lastComputeMs = null; resetAxis(ax); resetAxis(ay); ax.hist = []; ay.hist = []; }   // the learned plant gain is kept: it belongs to the mount, not to a session
+  function resetAxis(a) { a.moving = false; a.d = 0; a.i = 0; a.prevErr = null; }
+  function reset() { fx = null; fy = null; lastObsMs = null; resetAxis(ax); resetAxis(ay); }
 
   function updateAxis(a, err, dtSec) {
     if (a.prevErr !== null && dtSec > 0.01) {
-      const raw = clamp((err - a.prevErr) / dtSec, -1.5, 1.5);
-      a.v += 0.5 * (raw - a.v);                       // filtered velocity of the image error (frame fractions / s)
+      const raw = (err - a.prevErr) / dtSec;
+      a.d += 0.5 * (raw - a.d);                       // lightly filtered derivative of the image error
       if (s.ki > 0 && a.moving) {
-        if (Math.sign(err) !== Math.sign(a.prevErr)) a.i = 0;
+        if (Math.sign(err) !== Math.sign(a.prevErr)) a.i = 0;   // crossed the centre: drop the integral
         else a.i = clamp(a.i + err * dtSec, -s.integralLimit / s.ki, s.integralLimit / s.ki);
       }
     }
     a.prevErr = err;
-  }
-
-  // Learn how much the picture really moves per degree of commanded motion. The estimate only knows rough degrees per
-  // second, so the ratio (measured shift / commanded shift) between two detections corrects the model online.
-  function learn(a, rawErr, t, dir, fovDeg) {
-    if (a.rawErr !== null && a.rawT !== null && t - a.rawT > 0 && t - a.rawT <= 1500) {
-      const p1 = posAt(a, t - s.captureDelayMs - s.actuationDelayMs);
-      const p0 = posAt(a, a.rawT - s.captureDelayMs - s.actuationDelayMs);
-      if (p1 !== null && p0 !== null) {
-        const commanded = -dir * ((p1 - p0) / fovDeg);          // expected change of the image error
-        const measured = rawErr - a.rawErr;
-        if (Math.abs(commanded) > 0.03 && measured / commanded > 0) {
-          a.q += 0.35 * (clamp(measured / commanded, 0.25, 3) - a.q);
-        }
-      }
-    }
-    a.rawErr = rawErr; a.rawT = t;
   }
 
   /** Feed the person's centre (normalised 0..1 in the raw camera frame). */
@@ -128,61 +88,24 @@ export function createVelocityController(initial = {}) {
     if (fx === null) { fx = x; fy = y; } else { fx += s.emaAlpha * (x - fx); fy += s.emaAlpha * (y - fy); }
     updateAxis(ax, fx - 0.5, dtSec);
     updateAxis(ay, fy - 0.5, dtSec);
-    learn(ax, x - 0.5, t, s.yawDirection, s.fovYawDeg);
-    learn(ay, y - 0.5, t, s.tiltDirection, s.fovTiltDeg);
   }
 
-  const record = (a, t, pos) => {
-    if (!Number.isFinite(pos)) return;
-    const h = a.hist;
-    if (h.length && (t < h[h.length - 1].t || Math.abs(pos - h[h.length - 1].pos) > 90)) h.length = 0;   // clock or estimate reset
-    h.push({ t, pos });
-    while (h.length > 2 && t - h[0].t > 3000) h.shift();
-  };
-  function posAt(a, t) {
-    const h = a.hist;
-    if (h.length === 0) return null;
-    if (t <= h[0].t) return h[0].pos;
-    for (let i = h.length - 1; i >= 0; i -= 1) {
-      if (h[i].t <= t) {
-        const n = h[i + 1];
-        if (!n) return h[i].pos;
-        return h[i].pos + ((n.pos - h[i].pos) * (t - h[i].t)) / Math.max(n.t - h[i].t, 1);
-      }
-    }
-    return h[0].pos;
-  }
-
-  // Measured error corrected for the camera motion commanded since the measured frame was captured.
-  function compensated(measErr, a, dir, fovDeg, nowMs) {
-    if (!(s.smithScale > 0)) return measErr;
-    const tCap = lastObsMs - s.captureDelayMs;
-    const pNow = posAt(a, nowMs - s.actuationDelayMs);
-    const pCap = posAt(a, tCap - s.actuationDelayMs);
-    if (pNow === null || pCap === null) return measErr;
-    return measErr - dir * s.smithScale * a.q * ((pNow - pCap) / fovDeg);
-  }
-
-  function axis(measErr, a, gain, dir, fovDeg, freshness, nowMs, dtMs) {
-    const err = compensated(measErr, a, dir, fovDeg, nowMs);
-    const mag = Math.abs(err);
+  function axis(error, a, gain, dir, freshness) {
+    const mag = Math.abs(error);
     const outer = s.deadZone;
     const inner = outer * s.innerFraction;
     let m = a.moving;
     if (m) { if (mag < inner) m = false; } else if (mag > outer) m = true;
     a.moving = m;
-    let target = 0;
-    if (m) {
-      const u = Math.sign(err) * (gain / clamp(a.q, 0.5, 3)) * (mag - inner) + s.kd * a.v + s.ki * a.i;   // gain normalised by the learned plant gain
-      if (Math.sign(u) === Math.sign(err)) {                 // never reverse to brake: coast instead
-        target = Math.sign(err) * dir * clamp(Math.abs(u), s.minSpeedPct / 100, s.maxSpeedPct / 100) * freshness;
-      }
-    } else a.i = 0;
-    // Low-pass the commanded speed so a new detection changes it smoothly instead of in a step.
-    const alpha = s.speedSmoothMs <= 0 ? 1 : 1 - Math.exp(-dtMs / s.speedSmoothMs);
-    a.lp += alpha * (target - a.lp);
-    if (target === 0 && Math.abs(a.lp) < 0.01) a.lp = 0;
-    return { speed: Math.round(a.lp * 1000), moving: m };
+    if (!m) { a.i = 0; return { speed: 0, moving: false }; }
+    // PID on the signed error; the output must never push away from the target (no active reverse braking).
+    const pTerm = Math.sign(error) * gain * (mag - inner);
+    const dTerm = s.kd * a.d;
+    const iTerm = s.ki * a.i;
+    let u = pTerm + dTerm + iTerm;
+    if (Math.sign(u) !== Math.sign(error)) return { speed: 0, moving: true };   // damped to a coast
+    const um = clamp(Math.abs(u), s.minSpeedPct / 100, s.maxSpeedPct / 100) * freshness;
+    return { speed: Math.round(Math.sign(error) * dir * um * 1000), moving: true };
   }
 
   /**
@@ -190,17 +113,14 @@ export function createVelocityController(initial = {}) {
    * Statuses: NO PERSON, CENTRED, TRACKING, LIMIT
    */
   function compute(nowMs, { estimate = null } = {}) {
-    const dtMs = lastComputeMs === null ? 50 : clamp(nowMs - lastComputeMs, 1, 250);
-    lastComputeMs = nowMs;
-    if (estimate) { record(ax, nowMs, estimate.yaw); record(ay, nowMs, estimate.tilt); }
     if (lastObsMs === null || fx === null || nowMs - lastObsMs > s.lostMs) {
-      ax.moving = false; ay.moving = false; ax.lp = 0; ay.lp = 0;   // keep velocity/integral memory across a late detection
+      ax.moving = false; ay.moving = false;   // keep the derivative/integral memory: a late detection is not a new person
       return { yaw: 0, tilt: 0, status: 'NO PERSON' };
     }
-    const age = nowMs - lastObsMs;
-    const freshness = clamp((s.lostMs - age) / s.staleDecayMs, 0, 1);
-    const rx = axis(fx - 0.5, ax, s.gainYaw, s.yawDirection, s.fovYawDeg, freshness, nowMs, dtMs);
-    const ry = axis(fy - 0.5, ay, s.gainTilt, s.tiltDirection, s.fovTiltDeg, freshness, nowMs, dtMs);
+    // Do not keep driving on an old measurement: fade the speed out between fresh detections.
+    const freshness = clamp(1 - (nowMs - lastObsMs) / s.staleDecayMs, 0, 1);
+    const rx = axis(fx - 0.5, ax, s.gainYaw, s.yawDirection, freshness);
+    const ry = axis(fy - 0.5, ay, s.gainTilt, s.tiltDirection, freshness);
     const limited = applySoftLimits([rx.speed, ry.speed], estimate, s);
     const status = limited.blocked ? 'LIMIT' : (rx.moving || ry.moving ? 'TRACKING' : 'CENTRED');
     return { yaw: limited.speeds[0], tilt: limited.speeds[1], status };
@@ -258,107 +178,4 @@ export function createSpeedShaper({ rampPerSec = 3000, dwellMs = 200 } = {}) {
     setParams({ rampPerSec: r, dwellMs: d } = {}) { if (Number.isFinite(r)) ramp = r; if (Number.isFinite(d)) dwell = d; },
     current: () => [Math.round(cur[0]), Math.round(cur[1])],
   });
-}
-
-/**
- * Look-move-wait ("pulse") controller. Built for a delayed camera loop on a servo that has a minimum speed:
- * a continuous controller cannot avoid overshoot there, because every command already moves the mount quickly for the
- * whole delay. Instead: measure, send ONE short pulse sized to remove part of the error, stop, wait until a camera frame
- * captured AFTER the motion has settled, then correct what is left. The first pulse is a short probe, and the real
- * pulse rate (picture shift per second of pulse) is learned from the result, so pulses stay on the cautious (short) side.
- * Same interface as createVelocityController.
- */
-export function createPulseController(initial = {}) {
-  let s = sanitizeCrSettings(initial);
-  let lastObsMs = null;
-  let raw = null;                // latest raw detection { ex, ey, t }
-  let lastComputeMs = null;
-  const mk = () => ({ state: 'wait', moving: false, pulseStart: 0, pulseMs: 0, pulseSpeed: 0, pulseDir: 0, errBefore: 0, readyObs: 0, rate: null, rates: [], learned: false });
-  const ax = mk();
-  const ay = mk();
-
-  function reset() { lastObsMs = null; raw = null; lastComputeMs = null; for (const a of [ax, ay]) { a.state = 'wait'; a.moving = false; a.readyObs = 0; a.pulseSpeed = 0; } }
-
-  function observe({ x, y, t }) {
-    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(t)) return;
-    lastObsMs = t;
-    raw = { ex: x - 0.5, ey: y - 0.5, t };
-  }
-
-  const median = (arr) => { const a = [...arr].sort((p, q) => p - q); const m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; };
-
-  function learn(a, errAfter) {
-    // How far the picture really moved during the pulse, per second of pulse (frame fractions / s).
-    const crossed = Math.sign(errAfter) !== Math.sign(a.errBefore);
-    const shift = crossed ? Math.abs(a.errBefore) + Math.abs(errAfter) : Math.abs(a.errBefore) - Math.abs(errAfter);
-    if (shift > 0.01 && a.pulseMs > 0) {
-      const obs = shift / (a.pulseMs / 1000);
-      const base = a.rate ?? obs;
-      a.rates.push(clamp(obs, base / 3, base * 3));   // a person walking during the pulse cannot swing one sample far
-      if (a.rates.length > 5) a.rates.shift();
-      a.rate = median(a.rates);
-      a.learned = true;
-    }
-  }
-
-  function axis(a, err, obsT, dir, fovDeg, gain, nowMs, dtMs) {
-    const outer = s.deadZone;
-    const inner = outer * s.innerFraction;
-    const maxU = s.maxSpeedPct / 100;
-    const uPulse = clamp(s.pulseSpeedPct / 100, 0.02, maxU);
-    const rampDownMs = (uPulse * 1000 / s.rampPerSec) * 1000;
-
-    if (a.state === 'pulse') {
-      if (nowMs - a.pulseStart < a.pulseMs) return a.pulseSpeed;
-      a.state = 'wait';
-      a.readyObs = a.pulseStart + a.pulseMs + rampDownMs + s.actuationDelayMs + 120 + s.captureDelayMs;   // observation time after which a frame shows the settled picture
-      return 0;
-    }
-    if (raw === null || obsT < a.readyObs) return 0;                 // wait for a frame captured after the motion settled
-    if (a.awaiting) { learn(a, err); a.awaiting = false; }
-    const mag = Math.abs(err);
-    let m = a.moving;
-    if (m) { if (mag < inner) m = false; } else if (mag > outer) m = true;
-    a.moving = m;
-    if (!m) return 0;
-    // Size a pulse that removes `pulseFraction` of the error (undershoot on purpose: the next look corrects the rest).
-    const expectedRate = (s.fovYawDeg > 0 ? (60 * uPulse) / fovDeg : 1) * s.plantGainInit;   // model guess, biased fast = short pulses
-    const rate = a.rate ?? expectedRate;
-    // The shortest pulse still moves the picture by rate * minPulseMs. An error smaller than half of that cannot be
-    // improved by pulsing (it would only overshoot to the other side), so leave it alone instead of chattering.
-    const smallestStep = (rate * s.minPulseMs) / 1000;
-    if (mag < smallestStep * 0.5) { a.moving = false; return 0; }
-    let ms = ((mag - inner * 0.5) * s.pulseFraction / rate) * 1000;
-    ms = clamp(ms, s.minPulseMs, s.maxPulseMs);
-    if (!a.learned) ms = Math.min(ms, s.probePulseMs);
-    a.state = 'pulse'; a.pulseStart = nowMs; a.pulseMs = ms; a.pulseDir = Math.sign(err);
-    a.pulseSpeed = Math.round(Math.sign(err) * dir * uPulse * 1000) / 1000;
-    a.errBefore = err; a.awaiting = true; a.readyObs = Infinity;       // set properly when the pulse ends
-    return a.pulseSpeed;
-  }
-
-  function compute(nowMs, { estimate = null } = {}) {
-    const dtMs = lastComputeMs === null ? 50 : clamp(nowMs - lastComputeMs, 1, 250);
-    lastComputeMs = nowMs;
-    if (lastObsMs === null || raw === null || nowMs - lastObsMs > s.lostMs) {
-      for (const a of [ax, ay]) { if (a.state === 'pulse') { a.state = 'wait'; a.readyObs = 0; a.awaiting = false; } a.moving = false; }
-      return { yaw: 0, tilt: 0, status: 'NO PERSON' };
-    }
-    const yaw = axis(ax, raw.ex, raw.t, s.yawDirection, s.fovYawDeg, s.gainYaw, nowMs, dtMs);
-    const tilt = axis(ay, raw.ey, raw.t, s.tiltDirection, s.fovTiltDeg, s.gainTilt, nowMs, dtMs);
-    const limited = applySoftLimits([Math.round(yaw * 1000), Math.round(tilt * 1000)], estimate, s);
-    const active = ax.state === 'pulse' || ay.state === 'pulse' || ax.moving || ay.moving;
-    return { yaw: limited.speeds[0], tilt: limited.speeds[1], status: limited.blocked ? 'LIMIT' : (active ? 'TRACKING' : 'CENTRED') };
-  }
-
-  return Object.freeze({
-    observe, compute, reset,
-    setSettings(next) { s = sanitizeCrSettings({ ...s, ...next }); },
-    getSettings: () => s,
-  });
-}
-
-/** Picks the controller named by settings.trackMode (1 = look-move-wait pulses, 0 = continuous). */
-export function createTrackingController(settings = {}) {
-  return sanitizeCrSettings(settings).trackMode >= 0.5 ? createPulseController(settings) : createVelocityController(settings);
 }
