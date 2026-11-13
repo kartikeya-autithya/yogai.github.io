@@ -281,8 +281,8 @@ export function createContinuousMount({
     if (loopTimer !== null) { clearInterval(loopTimer); loopTimer = null; }
   }
 
-  const TRACK_PULSE_MS = 100;
-  const TRACK_PAUSE_MS = 100;
+  const TRACK_PULSE_MS = 30;
+  const TRACK_PAUSE_MS = 150;
   let trackingPulseActive = false;
   let trackingPulseStartedAt = 0;
   let trackingPulsePauseUntil = 0;
