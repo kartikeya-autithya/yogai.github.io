@@ -13,7 +13,7 @@ import { WebUsbCdcTransport, WebSerialTransport, findPersonCentre } from './ardu
 import { commands, parseReply, nextSeq, PROTOCOL } from './continuous-protocol.mjs';
 import {
   CR_SETTINGS_DEFAULTS, sanitizeCrSettings, createVelocityController, createSpeedShaper, applySoftLimits,
-} from './continuous-controller-slow.mjs';
+} from './continuous-controller.mjs';
 import { createTravelEstimator } from './travel-estimate.mjs';
 
 export const CR_CALIBRATION_DEFAULTS = Object.freeze({
@@ -24,7 +24,7 @@ export const CR_CALIBRATION_DEFAULTS = Object.freeze({
   tables: [null, null],              // optional measured [{permille, dps}] per axis
   watchdogMs: 400,
   maxRunMs: 4000,
-  reversalDwellMs: 50,
+  reversalDwellMs: 150,
   rampPerSec: 4000,
   stopMode: 0,
 });
@@ -32,12 +32,10 @@ export const CR_CALIBRATION_DEFAULTS = Object.freeze({
 const SETTINGS_KEY = 'yogai.cr.settings.v1';
 const CALIBRATION_KEY = 'yogai.cr.calibration.v1';
 const ESTIMATE_KEY = 'yogai.cr.estimate.v1';
-const TICK_MS = 25;
+const TICK_MS = 50;
 // Measured on an Android phone running the camera + pose model: the page can stall for 400+ ms, longer than the
 // firmware's 400 ms default. The watchdog is kept (never disabled) but given a realistic floor.
 const WATCHDOG_FLOOR_MS = 1000;
-// Firmware pause at neutral on a direction reversal. The speed ramp still brings the servo to neutral first.
-const REVERSAL_DWELL_MS = 50;
 const MANUAL_HOLD_MS = 500;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -85,28 +83,17 @@ export function createContinuousMount({
   writeTimeoutMs = 800,   // a speed command that cannot be written in this time is treated as a USB fault
   rxTimeoutMs = 1500,     // while armed the firmware sends ST lines 5x/s; silence this long means the link is dead (0 = off)
 } = {}) {
-  const SLOW_SETTINGS_MARKER = 'yogai.cr.slow-tuning.v2';
+  // Settings written by newer tuning revisions carry settingsRev. Drop their retuned keys once so this version starts from
+  // its own defaults (the sliders you set yourself, such as dead zone and speed caps, are kept).
   const savedSettings = readJson(storage, SETTINGS_KEY) ?? {};
-  const slowSettingsApplied = readJson(storage, SLOW_SETTINGS_MARKER) === true;
-
-  const settingsToLoad = slowSettingsApplied
-    ? savedSettings
-    : {
-        ...savedSettings,
-        gainYaw: CR_SETTINGS_DEFAULTS.gainYaw,
-        gainTilt: CR_SETTINGS_DEFAULTS.gainTilt,
-        maxSpeedPct: CR_SETTINGS_DEFAULTS.maxSpeedPct,
-        dwellMs: CR_SETTINGS_DEFAULTS.dwellMs,
-      };
-
-  let settings = sanitizeCrSettings(settingsToLoad);
-
-  if (!slowSettingsApplied) {
-    writeJson(storage, SETTINGS_KEY, settings);
-    writeJson(storage, SLOW_SETTINGS_MARKER, true);
+  if ('settingsRev' in savedSettings) {
+    for (const k of ['gainYaw', 'gainTilt', 'lostMs', 'dwellMs', 'staleDecayMs', 'kd', 'ki', 'integralLimit', 'captureDelayMs', 'actuationDelayMs',
+      'fovYawDeg', 'fovTiltDeg', 'smithScale', 'plantGainInit', 'speedSmoothMs', 'trackMode', 'pulseSpeedPct', 'pulseFraction', 'minPulseMs',
+      'maxPulseMs', 'probePulseMs', 'settingsRev']) delete savedSettings[k];
   }
+  let settings = sanitizeCrSettings(savedSettings);
   let calibration = sanitizeCalibration(readJson(storage, CALIBRATION_KEY) ?? {});
-  let controller = createVelocityController(settings);
+  const controller = createVelocityController(settings);
   const shaper = createSpeedShaper({ rampPerSec: settings.rampPerSec, dwellMs: settings.dwellMs });
   const estimator = createTravelEstimator({ dpsAtFull: calibration.dpsAtFull, tables: calibration.tables });
 
@@ -281,12 +268,6 @@ export function createContinuousMount({
     if (loopTimer !== null) { clearInterval(loopTimer); loopTimer = null; }
   }
 
-  const TRACK_PULSE_MS = 30;
-  const TRACK_PAUSE_MS = 150;
-  let trackingPulseActive = false;
-  let trackingPulseStartedAt = 0;
-  let trackingPulsePauseUntil = 0;
-
   let ticking = false;
   async function tick() {
     if (!armed || !connected || ticking) return;
@@ -311,36 +292,10 @@ export function createContinuousMount({
       let targets = [0, 0];
       if (tracking) {
         const r = controller.compute(t, { estimate: estimator.get() });
-        const requested = [r.yaw, r.tilt];
-        const hasDemand = requested.some(v => Math.abs(v) > 0);
-
-        if (!hasDemand) {
-          trackingPulseActive = false;
-          targets = [0, 0];
-        } else if (
-          trackingPulseActive &&
-          t - trackingPulseStartedAt < TRACK_PULSE_MS
-        ) {
-          targets = requested;
-        } else if (trackingPulseActive) {
-          trackingPulseActive = false;
-          trackingPulsePauseUntil = t + TRACK_PAUSE_MS;
-          targets = [0, 0];
-        } else if (t >= trackingPulsePauseUntil) {
-          trackingPulseActive = true;
-          trackingPulseStartedAt = t;
-          targets = requested;
-        } else {
-          targets = [0, 0];
-        }
+        targets = [r.yaw, r.tilt];
         trackStatus = r.status;
       } else if (manualUntil > t) {
-        trackingPulseActive = false;
-        trackingPulsePauseUntil = 0;
         targets = applySoftLimits(manual, estimator.get(), settings).speeds;
-      } else {
-        trackingPulseActive = false;
-        trackingPulsePauseUntil = 0;
       }
       speeds = shaper.step(targets, t, dt);
       estimator.step(0, speeds[0], dt);
@@ -419,7 +374,7 @@ export function createContinuousMount({
       }
     }
     await request((id) => commands.param(id, 'watchdogMs', Math.max(c.watchdogMs, WATCHDOG_FLOOR_MS)));
-    await request((id) => commands.param(id, 'reversalDwellMs', Math.min(c.reversalDwellMs, REVERSAL_DWELL_MS)));
+    await request((id) => commands.param(id, 'reversalDwellMs', c.reversalDwellMs));
     await request((id) => commands.param(id, 'rampPerSec', c.rampPerSec));
     await request((id) => commands.param(id, 'maxRunMs', c.maxRunMs));
     await request((id) => commands.param(id, 'stopMode', c.stopMode));
@@ -563,7 +518,7 @@ export function createContinuousMount({
     if (!tracking || !connected) return null;
     const centre = findPersonCentre(landmarks, settings);
     if (!centre) return null;
-    controller.observe({ x: centre.x, y: centre.y, t: now() });
+    controller.observe({ x: centre.x, y: centre.y, t: timestampMs });
     return centre;
   }
 
