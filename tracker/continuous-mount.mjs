@@ -12,7 +12,7 @@
 import { WebUsbCdcTransport, WebSerialTransport, findPersonCentre } from './arduino-mount.mjs';
 import { commands, parseReply, nextSeq, PROTOCOL } from './continuous-protocol.mjs';
 import {
-  CR_SETTINGS_DEFAULTS, CR_SETTINGS_REV, CR_RETUNED_KEYS, sanitizeCrSettings, createVelocityController, createSpeedShaper, applySoftLimits,
+  CR_SETTINGS_DEFAULTS, CR_SETTINGS_REV, CR_RETUNED_KEYS, sanitizeCrSettings, createTrackingController, createSpeedShaper, applySoftLimits,
 } from './continuous-controller.mjs';
 import { createTravelEstimator } from './travel-estimate.mjs';
 
@@ -91,7 +91,7 @@ export function createContinuousMount({
   if (savedSettings.settingsRev !== CR_SETTINGS_REV) for (const k of CR_RETUNED_KEYS) delete savedSettings[k];
   let settings = sanitizeCrSettings(savedSettings);
   let calibration = sanitizeCalibration(readJson(storage, CALIBRATION_KEY) ?? {});
-  const controller = createVelocityController(settings);
+  let controller = createTrackingController(settings);
   const shaper = createSpeedShaper({ rampPerSec: settings.rampPerSec, dwellMs: settings.dwellMs });
   const estimator = createTravelEstimator({ dpsAtFull: calibration.dpsAtFull, tables: calibration.tables });
 
@@ -523,7 +523,8 @@ export function createContinuousMount({
   // ------------------------------------------------------------ settings and calibration
   function setSettings(next = {}) {
     settings = sanitizeCrSettings({ ...settings, ...next });
-    controller.setSettings(settings);
+    if ((settings.trackMode >= 0.5) !== (controller.getSettings().trackMode >= 0.5)) controller = createTrackingController(settings);
+    else controller.setSettings(settings);
     shaper.setParams({ rampPerSec: settings.rampPerSec, dwellMs: settings.dwellMs });
     writeJson(storage, SETTINGS_KEY, settings);
     emit();

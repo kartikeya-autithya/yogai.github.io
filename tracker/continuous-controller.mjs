@@ -21,6 +21,12 @@ export const CR_SETTINGS_DEFAULTS = Object.freeze({
   fovTiltDeg: 65,        // approx. vertical field of view
   smithScale: 1.0,       // 0..1.5: how much of the already-commanded camera motion is subtracted from a stale measurement
   plantGainInit: 2.0,    // starting guess of (real picture shift / modelled shift) until it is learned; >1 is the cautious side
+  trackMode: 1,          // 1 = look-move-wait pulses (default, no overshoot on a delayed loop); 0 = continuous delay-compensated PID
+  pulseSpeedPct: 30,     // look-move-wait: speed of a correction pulse (% of full)
+  pulseFraction: 0.8,    // look-move-wait: fraction of the remaining error one pulse aims to remove (<1 = undershoot)
+  minPulseMs: 40,
+  maxPulseMs: 1200,
+  probePulseMs: 250,     // the first pulse is a short probe until the real pulse rate has been measured
   speedSmoothMs: 100,    // low-pass on the commanded speed (removes steps when a new detection arrives)
   settingsRev: 3,        // bumped when defaults are retuned; older saved values of the retuned keys are dropped
   maxSpeedPct: 50,       // cap, percent of the calibrated speed range
@@ -39,15 +45,15 @@ export const CR_SETTINGS_DEFAULTS = Object.freeze({
   minBboxFraction: 0.05,
 });
 
-export const CR_SETTINGS_REV = 3;
+export const CR_SETTINGS_REV = 4;
 // Keys whose defaults were retuned in this revision; a phone that saved the old values gets the new defaults.
-export const CR_RETUNED_KEYS = Object.freeze(['gainYaw', 'gainTilt', 'lostMs', 'dwellMs', 'staleDecayMs', 'kd', 'ki', 'integralLimit', 'captureDelayMs', 'actuationDelayMs', 'fovYawDeg', 'fovTiltDeg', 'smithScale', 'plantGainInit', 'speedSmoothMs']);
+export const CR_RETUNED_KEYS = Object.freeze(['gainYaw', 'gainTilt', 'lostMs', 'dwellMs', 'staleDecayMs', 'kd', 'ki', 'integralLimit', 'captureDelayMs', 'actuationDelayMs', 'fovYawDeg', 'fovTiltDeg', 'smithScale', 'plantGainInit', 'speedSmoothMs', 'trackMode', 'pulseSpeedPct', 'pulseFraction', 'minPulseMs', 'maxPulseMs', 'probePulseMs']);
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const sign = (v) => (v > 0 ? 1 : v < 0 ? -1 : 0);
 
 const RANGES = Object.freeze({
-  deadZone: [0.02, 0.25], captureDelayMs: [0, 1500], actuationDelayMs: [0, 1000], fovYawDeg: [10, 120], fovTiltDeg: [10, 120], smithScale: [0, 1.5], plantGainInit: [0.5, 3], speedSmoothMs: [0, 500], innerFraction: [0.3, 0.95], emaAlpha: [0.15, 0.9],
+  deadZone: [0.02, 0.25], captureDelayMs: [0, 1500], actuationDelayMs: [0, 1000], fovYawDeg: [10, 120], fovTiltDeg: [10, 120], smithScale: [0, 1.5], plantGainInit: [0.5, 3], speedSmoothMs: [0, 500], trackMode: [0, 1], pulseSpeedPct: [5, 100], pulseFraction: [0.2, 1], minPulseMs: [20, 500], maxPulseMs: [100, 3000], probePulseMs: [50, 1000], innerFraction: [0.3, 0.95], emaAlpha: [0.15, 0.9],
   gainYaw: [0.5, 8], gainTilt: [0.5, 8], kd: [0, 5], ki: [0, 2], integralLimit: [0, 0.3], staleDecayMs: [50, 1000], maxSpeedPct: [5, 100], minSpeedPct: [0, 20],
   rampPerSec: [200, 4000], dwellMs: [50, 1000], lostMs: [100, 1500], reacquireResetMs: [200, 3000],
   softLimitYawDeg: [5, 360], softLimitTiltDeg: [5, 180], manualSpeedPct: [5, 100],
@@ -252,4 +258,107 @@ export function createSpeedShaper({ rampPerSec = 3000, dwellMs = 200 } = {}) {
     setParams({ rampPerSec: r, dwellMs: d } = {}) { if (Number.isFinite(r)) ramp = r; if (Number.isFinite(d)) dwell = d; },
     current: () => [Math.round(cur[0]), Math.round(cur[1])],
   });
+}
+
+/**
+ * Look-move-wait ("pulse") controller. Built for a delayed camera loop on a servo that has a minimum speed:
+ * a continuous controller cannot avoid overshoot there, because every command already moves the mount quickly for the
+ * whole delay. Instead: measure, send ONE short pulse sized to remove part of the error, stop, wait until a camera frame
+ * captured AFTER the motion has settled, then correct what is left. The first pulse is a short probe, and the real
+ * pulse rate (picture shift per second of pulse) is learned from the result, so pulses stay on the cautious (short) side.
+ * Same interface as createVelocityController.
+ */
+export function createPulseController(initial = {}) {
+  let s = sanitizeCrSettings(initial);
+  let lastObsMs = null;
+  let raw = null;                // latest raw detection { ex, ey, t }
+  let lastComputeMs = null;
+  const mk = () => ({ state: 'wait', moving: false, pulseStart: 0, pulseMs: 0, pulseSpeed: 0, pulseDir: 0, errBefore: 0, readyObs: 0, rate: null, rates: [], learned: false });
+  const ax = mk();
+  const ay = mk();
+
+  function reset() { lastObsMs = null; raw = null; lastComputeMs = null; for (const a of [ax, ay]) { a.state = 'wait'; a.moving = false; a.readyObs = 0; a.pulseSpeed = 0; } }
+
+  function observe({ x, y, t }) {
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(t)) return;
+    lastObsMs = t;
+    raw = { ex: x - 0.5, ey: y - 0.5, t };
+  }
+
+  const median = (arr) => { const a = [...arr].sort((p, q) => p - q); const m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; };
+
+  function learn(a, errAfter) {
+    // How far the picture really moved during the pulse, per second of pulse (frame fractions / s).
+    const crossed = Math.sign(errAfter) !== Math.sign(a.errBefore);
+    const shift = crossed ? Math.abs(a.errBefore) + Math.abs(errAfter) : Math.abs(a.errBefore) - Math.abs(errAfter);
+    if (shift > 0.01 && a.pulseMs > 0) {
+      const obs = shift / (a.pulseMs / 1000);
+      const base = a.rate ?? obs;
+      a.rates.push(clamp(obs, base / 3, base * 3));   // a person walking during the pulse cannot swing one sample far
+      if (a.rates.length > 5) a.rates.shift();
+      a.rate = median(a.rates);
+      a.learned = true;
+    }
+  }
+
+  function axis(a, err, obsT, dir, fovDeg, gain, nowMs, dtMs) {
+    const outer = s.deadZone;
+    const inner = outer * s.innerFraction;
+    const maxU = s.maxSpeedPct / 100;
+    const uPulse = clamp(s.pulseSpeedPct / 100, 0.02, maxU);
+    const rampDownMs = (uPulse * 1000 / s.rampPerSec) * 1000;
+
+    if (a.state === 'pulse') {
+      if (nowMs - a.pulseStart < a.pulseMs) return a.pulseSpeed;
+      a.state = 'wait';
+      a.readyObs = a.pulseStart + a.pulseMs + rampDownMs + s.actuationDelayMs + 120 + s.captureDelayMs;   // observation time after which a frame shows the settled picture
+      return 0;
+    }
+    if (raw === null || obsT < a.readyObs) return 0;                 // wait for a frame captured after the motion settled
+    if (a.awaiting) { learn(a, err); a.awaiting = false; }
+    const mag = Math.abs(err);
+    let m = a.moving;
+    if (m) { if (mag < inner) m = false; } else if (mag > outer) m = true;
+    a.moving = m;
+    if (!m) return 0;
+    // Size a pulse that removes `pulseFraction` of the error (undershoot on purpose: the next look corrects the rest).
+    const expectedRate = (s.fovYawDeg > 0 ? (60 * uPulse) / fovDeg : 1) * s.plantGainInit;   // model guess, biased fast = short pulses
+    const rate = a.rate ?? expectedRate;
+    // The shortest pulse still moves the picture by rate * minPulseMs. An error smaller than half of that cannot be
+    // improved by pulsing (it would only overshoot to the other side), so leave it alone instead of chattering.
+    const smallestStep = (rate * s.minPulseMs) / 1000;
+    if (mag < smallestStep * 0.5) { a.moving = false; return 0; }
+    let ms = ((mag - inner * 0.5) * s.pulseFraction / rate) * 1000;
+    ms = clamp(ms, s.minPulseMs, s.maxPulseMs);
+    if (!a.learned) ms = Math.min(ms, s.probePulseMs);
+    a.state = 'pulse'; a.pulseStart = nowMs; a.pulseMs = ms; a.pulseDir = Math.sign(err);
+    a.pulseSpeed = Math.round(Math.sign(err) * dir * uPulse * 1000) / 1000;
+    a.errBefore = err; a.awaiting = true; a.readyObs = Infinity;       // set properly when the pulse ends
+    return a.pulseSpeed;
+  }
+
+  function compute(nowMs, { estimate = null } = {}) {
+    const dtMs = lastComputeMs === null ? 50 : clamp(nowMs - lastComputeMs, 1, 250);
+    lastComputeMs = nowMs;
+    if (lastObsMs === null || raw === null || nowMs - lastObsMs > s.lostMs) {
+      for (const a of [ax, ay]) { if (a.state === 'pulse') { a.state = 'wait'; a.readyObs = 0; a.awaiting = false; } a.moving = false; }
+      return { yaw: 0, tilt: 0, status: 'NO PERSON' };
+    }
+    const yaw = axis(ax, raw.ex, raw.t, s.yawDirection, s.fovYawDeg, s.gainYaw, nowMs, dtMs);
+    const tilt = axis(ay, raw.ey, raw.t, s.tiltDirection, s.fovTiltDeg, s.gainTilt, nowMs, dtMs);
+    const limited = applySoftLimits([Math.round(yaw * 1000), Math.round(tilt * 1000)], estimate, s);
+    const active = ax.state === 'pulse' || ay.state === 'pulse' || ax.moving || ay.moving;
+    return { yaw: limited.speeds[0], tilt: limited.speeds[1], status: limited.blocked ? 'LIMIT' : (active ? 'TRACKING' : 'CENTRED') };
+  }
+
+  return Object.freeze({
+    observe, compute, reset,
+    setSettings(next) { s = sanitizeCrSettings({ ...s, ...next }); },
+    getSettings: () => s,
+  });
+}
+
+/** Picks the controller named by settings.trackMode (1 = look-move-wait pulses, 0 = continuous). */
+export function createTrackingController(settings = {}) {
+  return sanitizeCrSettings(settings).trackMode >= 0.5 ? createPulseController(settings) : createVelocityController(settings);
 }
