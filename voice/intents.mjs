@@ -6,7 +6,7 @@ export const normalize = (s) =>
 
 // Speech engines hear "YogAI" many ways: "yoga i", "yoga eye", "yogi", "yoga ai"...
 const WAKE_RE =
-  /\b(?:hey|hay|hi|ok|okay)\s+(?:yoga\s*a\s*i|yoga\s*ai|yogai|yoga\s*eye|yoga\s*i|yogi|yoga)\b/;
+  /\b(?:hey|hay|hi|ok|okay)\s+(?:yoga\s*a\s*i|yoga\s*ai|yogai|yoga\s*eye|yoga\s*i|yogi|yoga|jarvis|jarvas|jarvus|jarvice)\b/;
 
 /** Returns { rest } if the text contains the wake phrase (rest = words after it), else null. */
 export function matchWake(text) {
@@ -19,6 +19,7 @@ export function matchWake(text) {
 // Order matters: more specific patterns come before general ones.
 const INTENTS = [
   { name: 'stop_listening', re: /\b(stop listening|go to sleep|mute (yourself|voice)|never mind|nevermind)\b/ },
+  { name: 'change_voice', re: /\b(change|switch|try|use|pick)\b.*\bvoice\b/ },
   { name: 'help', re: /\b(what can (you|i) (do|say)|list (the )?commands|voice help)\b/ },
 
   { name: 'stop_pose_detection', re: /\b(stop|end|turn off|disable|deactivate)\b.*\bpose\s*(detection|detector|tracking|check(ing)?)\b/ },

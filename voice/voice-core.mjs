@@ -40,6 +40,7 @@ export class VoiceAssistant extends EventTarget {
    * @param {boolean}  [opts.wakeWord]  true: need "Hey YogAI". false: tap-to-talk only (see listenNow()).
    * @param {number}   [opts.followUpMs] stay "awake" this long after a reply (default 8000)
    * @param {boolean}  [opts.speak]     speak replies aloud (default true)
+   * @param {function} [opts.tts]       optional async (text) => audio Blob|null (cloud voice); falls back to the browser voice
    */
   constructor({
     actions = {},
@@ -49,9 +50,10 @@ export class VoiceAssistant extends EventTarget {
     wakeWord = true,
     followUpMs = 8000,
     speak = true,
+    tts = null,
   } = {}) {
     super();
-    Object.assign(this, { actions, ask, getContext, lang, wakeWord, followUpMs, speakReplies: speak });
+    Object.assign(this, { actions, ask, getContext, lang, wakeWord, followUpMs, speakReplies: speak, tts });
     this.state = 'off';
     this._want = false;          // user wants the mic on
     this._speaking = false;
@@ -220,6 +222,7 @@ export class VoiceAssistant extends EventTarget {
   async _run(intent, text) {
     if (intent.name === 'stop_listening') { await this._speak('Okay, going quiet.'); return '__sleep__'; }
     if (intent.name === 'help') return HELP_TEXT;
+    if (intent.name === 'change_voice') return this.nextVoice() ? 'How about this voice?' : "I only have one voice on this device.";
     const fn = this.actions[intent.name];
     if (!fn) return "I can't do that yet.";
     const r = await fn({ text, intent });
@@ -228,30 +231,83 @@ export class VoiceAssistant extends EventTarget {
 
   // ---------- speech output (with echo guard) ----------
 
-  _speak(text) {
+  _voiceList() {
+    if (typeof speechSynthesis === 'undefined') return [];
+    const base = this.lang.slice(0, 2).toLowerCase();
+    const score = (v) =>
+      (/natural|neural|premium|enhanced|online/i.test(v.name) ? 3 : 0) +
+      (/google/i.test(v.name) ? 2 : 0) +
+      (v.lang === this.lang ? 1 : 0);
+    const seen = new Set();
+    return speechSynthesis.getVoices()
+      .filter((v) => v.lang && v.lang.toLowerCase().startsWith(base))
+      .filter((v) => !seen.has(v.name) && seen.add(v.name))
+      .sort((a, b) => score(b) - score(a));
+  }
+
+  _pickVoice() {
+    const list = this._voiceList();
+    let saved = null;
+    try { saved = localStorage.getItem('yogai.voice'); } catch {}
+    return list.find((v) => v.name === saved) || list[0] || null;
+  }
+
+  /** Cycle through the best few voices on this device and remember the choice. Returns false if there is only one. */
+  nextVoice() {
+    const list = this._voiceList().slice(0, 6);
+    if (list.length < 2) return false;
+    const cur = this._pickVoice();
+    const next = list[(list.findIndex((v) => v.name === cur?.name) + 1) % list.length];
+    try { localStorage.setItem('yogai.voice', next.name); } catch {}
+    return true;
+  }
+
+  async _speak(text) {
     this._lastReply = text;
     this._emit('reply', { text });
-    if (!this.speakReplies || typeof speechSynthesis === 'undefined') return Promise.resolve();
-    return new Promise((resolve) => {
-      // Stop the mic while we talk so YogAI never hears (and acts on) its own voice.
-      this._speaking = true;
-      clearTimeout(this._restartTimer);
-      try { this._rec?.abort(); } catch {}
-      this._rec = null;
-      speechSynthesis.cancel();
+    if (!this.speakReplies) return;
+    if (!this.tts && typeof speechSynthesis === 'undefined') return;
 
+    // Stop the mic while we talk so YogAI never hears (and acts on) its own voice.
+    this._speaking = true;
+    clearTimeout(this._restartTimer);
+    try { this._rec?.abort(); } catch {}
+    this._rec = null;
+    if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
+
+    let played = false;
+    if (this.tts) {
+      try {
+        const blob = await this.tts(text);
+        if (blob) { await this._playBlob(blob); played = true; }
+      } catch { /* fall back to the browser voice */ }
+    }
+    if (!played) await this._speakBrowser(text);
+
+    this._speaking = false;
+    if (this._want) setTimeout(() => this._startRec(), 300); // small gap so the tail isn't heard
+  }
+
+  _playBlob(blob) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      const end = (fn) => (arg) => { URL.revokeObjectURL(url); fn(arg); };
+      audio.onended = end(resolve);
+      audio.onerror = end(reject);
+      audio.play().catch(end(reject));
+    });
+  }
+
+  _speakBrowser(text) {
+    if (typeof speechSynthesis === 'undefined') return Promise.resolve();
+    return new Promise((resolve) => {
       const u = new SpeechSynthesisUtterance(text);
       u.lang = this.lang;
-      const v = speechSynthesis.getVoices().find((x) => x.lang === this.lang && x.localService) ||
-                speechSynthesis.getVoices().find((x) => x.lang?.startsWith(this.lang.slice(0, 2)));
+      u.rate = 0.97;
+      const v = this._pickVoice();
       if (v) u.voice = v;
-      const done = () => {
-        this._speaking = false;
-        if (this._want) setTimeout(() => this._startRec(), 300); // small gap so the tail isn't heard
-        resolve();
-      };
-      u.onend = done;
-      u.onerror = done;
+      u.onend = u.onerror = () => resolve();
       speechSynthesis.speak(u);
     });
   }

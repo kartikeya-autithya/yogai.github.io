@@ -3,12 +3,13 @@
 
 import { VoiceAssistant } from './voice-core.mjs';
 import { createVoiceBindings } from './voice-bridge.mjs';
+import { createCloudTTS } from './cloud-tts.mjs';
 
 export function mountVoice(api) {
   if (!VoiceAssistant.supported || document.getElementById('yogai-voice')) return null;
 
   const { actions, ask } = createVoiceBindings(api);
-  const va = new VoiceAssistant({ actions, ask });
+  const va = new VoiceAssistant({ actions, ask, tts: api.ttsUrl ? createCloudTTS({ url: api.ttsUrl }) : null });
 
   const style = document.createElement('style');
   style.textContent = `
@@ -38,7 +39,7 @@ export function mountVoice(api) {
   document.body.appendChild(root);
 
   const say = (t) => { pill.textContent = t; };
-  const idleText = 'Listening for “Hey YogAI”';
+  const idleText = 'Say “Hey YogAI” or “Hey Jarvis”';
 
   va.addEventListener('state', (e) => {
     const s = e.detail.state;
@@ -53,14 +54,27 @@ export function mountVoice(api) {
   va.addEventListener('reply', (e) => say(e.detail.text.slice(0, 90)));
   va.addEventListener('error', (e) => {
     // Show the message even if the error also switched voice off (e.g. mic permission denied).
+    const msg = (e.detail.code === 'permission' && autoStarting) ? 'Tap the mic to turn voice back on.' : e.detail.message;
+    if (e.detail.code === 'permission') flag(false);
     setTimeout(() => {
-      root.classList.add('on'); say(e.detail.message);
+      root.classList.add('on'); say(msg);
       if (va.state === 'off') setTimeout(() => root.classList.remove('on'), 5000);
     }, 0);
   });
 
-  mic.addEventListener('click', () => { va.state === 'off' ? va.start() : va.stop(); });
+  const FLAG = 'yogai.voice.on';
+  const flag = (on) => { try { on ? localStorage.setItem(FLAG, '1') : localStorage.removeItem(FLAG); } catch {} };
+  let autoStarting = false;
+
+  mic.addEventListener('click', () => {
+    if (va.state === 'off') { flag(true); va.start(); } else { flag(false); va.stop(); }
+  });
   talk.addEventListener('click', () => va.listenNow());
+
+  // If voice was on last time, try to resume (browsers may still require a tap; then the pill says so).
+  try {
+    if (localStorage.getItem(FLAG) === '1') { autoStarting = true; va.start(); setTimeout(() => { autoStarting = false; }, 4000); }
+  } catch {}
 
   window.YogaiVoice = va; // handy for testing in the browser console
   return va;

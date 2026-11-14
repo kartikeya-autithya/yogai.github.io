@@ -2,7 +2,8 @@
 // Same request shape the Chat screen already uses: { message, history, systemPrompt, appContext }.
 // Only already-transcribed text is sent. Audio never leaves the browser through this path.
 
-export function toSpeech(raw, maxChars = 450) {
+// 380 keeps every spoken reply under the Worker's 400-character voice limit, so speech never cuts off mid-sentence.
+export function toSpeech(raw, maxChars = 380) {
   let t = String(raw ?? '')
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
@@ -27,7 +28,11 @@ export function createWorkerAsk({
   maxHistory = 8,
 }) {
   const history = []; // voice conversation only; kept separate from the text Chat screen
-  const HINT = ' (Answer for speech: one to three short sentences, plain words, no lists or markdown.)';
+  const HINT =
+    ' (Voice answer: two to three short spoken sentences, plain words, no lists or markdown.' +
+    ' You may answer general yoga, breathing, meditation and Ayurveda questions from general knowledge' +
+    ' and say when something is general knowledge rather than app data.' +
+    ' No medical advice: for health conditions, herbs or supplements, suggest a doctor or qualified practitioner.)';
 
   return async function ask(text) {
     const ctl = new AbortController();
