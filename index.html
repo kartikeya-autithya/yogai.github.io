@@ -6962,6 +6962,7 @@ window.YogaiVoiceAPI = {
   today: () => todayStr(),
   getStats: () => computeStats(userData.sessions, todayStr()),
   workerUrl: WORKER_URL,
+  ttsUrl: WORKER_URL.replace("/api/chat", "/api/tts"),
   systemPrompt: () => currentSystemPrompt,
   appContext: () => buildAppContext(),
 };

@@ -121,6 +121,77 @@ async function handleKriyas(request, env, allowedOrigin) {
   return jsonResponse({ error: "Method not allowed" }, 405, allowedOrigin);
 }
 
+// --- Voice replies (text-to-speech) ------------------------------------
+// POST /api/tts  { text }  ->  audio/wav. Added for YogAI voice control.
+// Uses the same GEMINI_API_KEY secret and ALLOWED_ORIGIN as /api/chat.
+// Optional "vars" in wrangler.jsonc: TTS_VOICE, TTS_MODEL (defaults below).
+const TTS_MODEL = "gemini-3.8-flash-lite-tts";
+const TTS_VOICE = "Algenib";            // Google labels it "Gravelly" (male)
+const TTS_STYLE = "calm and steady";
+const TTS_MAX_CHARS = 400;              // replies are short; also caps cost per request
+const TTS_RATE_WINDOW_MS = 60 * 1000;
+const TTS_RATE_MAX = 40;
+const ttsLog = new Map(); // ip -> timestamps (per-isolate, soft limit like the chat one)
+
+function ttsRateLimited(ip) {
+  const now = Date.now();
+  const stamps = (ttsLog.get(ip) || []).filter(t => now - t < TTS_RATE_WINDOW_MS);
+  stamps.push(now);
+  ttsLog.set(ip, stamps);
+  if (ttsLog.size > 5000) ttsLog.clear();
+  return stamps.length > TTS_RATE_MAX;
+}
+
+async function handleTTS(request, env, allowedOrigin) {
+  if (request.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405, allowedOrigin);
+  if (request.headers.get("Origin") !== allowedOrigin) return jsonResponse({ error: "Forbidden" }, 403, allowedOrigin);
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  if (ttsRateLimited(ip)) return jsonResponse({ error: "Too many requests." }, 429, allowedOrigin);
+  if (!env.GEMINI_API_KEY) return jsonResponse({ error: "Not configured." }, 500, allowedOrigin);
+
+  let text = "";
+  try { text = String((await request.json()).text || "").trim(); } catch (e) { /* handled below */ }
+  if (!text) return jsonResponse({ error: "A text is required." }, 400, allowedOrigin);
+  if (text.length > TTS_MAX_CHARS) text = text.slice(0, TTS_MAX_CHARS);
+
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${env.TTS_MODEL || TTS_MODEL}:generateContent`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text, speech_metadata: { style: TTS_STYLE } }] }],
+          generationConfig: {
+            responseModalities: ["AUDIO"],
+            speechConfig: { voiceConfig: { voice: env.TTS_VOICE || TTS_VOICE } },
+          },
+        }),
+      }
+    );
+    if (!res.ok) {
+      console.error("[api/tts] Gemini request failed:", res.status, await res.text());
+      return jsonResponse({ error: "Voice unavailable." }, 502, allowedOrigin);
+    }
+    const data = await res.json();
+    const b64 = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (!b64) {
+      console.error("[api/tts] Gemini returned no audio.");
+      return jsonResponse({ error: "Voice unavailable." }, 502, allowedOrigin);
+    }
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Response(bytes, {
+      status: 200,
+      headers: { "Content-Type": "audio/wav", "Cache-Control": "no-store", ...corsHeaders(allowedOrigin) },
+    });
+  } catch (err) {
+    console.error("[api/tts] Unexpected error:", err?.message || err);
+    return jsonResponse({ error: "Voice unavailable." }, 502, allowedOrigin);
+  }
+}
+
 export default {
   async fetch(request, env) {
     const allowedOrigin = env.ALLOWED_ORIGIN || "https://MY_GITHUB_USERNAME.github.io";
@@ -134,6 +205,10 @@ export default {
 
     if (url.pathname === "/api/kriyas") {
       return handleKriyas(request, env, allowedOrigin);
+    }
+
+    if (url.pathname === "/api/tts") {
+      return handleTTS(request, env, allowedOrigin);
     }
 
     if (request.method !== "POST" || url.pathname !== "/api/chat") {
