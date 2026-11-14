@@ -6943,6 +6943,31 @@ document.addEventListener("keydown", ev=>{
 });
 initYaExplorer();
 initPhoneMountControls();
+
+// >>> YOGAI-VOICE-HOOK START (optional voice control; delete this whole block to disable it) >>>
+window.YogaiVoiceAPI = {
+  inPractice: () => activeScreenId() === "practice-screen",
+  startDaily: () => { const p = getTodayPlan(); if (!p || !p.steps.length) return false; startTodayPractice(); },
+  stop: () => window.stopPractice(),
+  // Skip / previous work in single-pose practice only for now (routines need a core-loop change).
+  skip: () => { if (practiceMode !== "single") return false; window.stepPose(1); },
+  previous: () => { if (practiceMode !== "single") return false; window.stepPose(-1); },
+  currentPose: () => { const name = getCurrentExerciseName(); return { name, info: name ? POSE_INFO[name] : null }; },
+  showProgress: () => window.showProgressScreen(),
+  showHistory: () => window.showHistoryScreen(),
+  showSettings: () => window.showSettings(),
+  isLoggedIn: () => !!authUser,
+  dataReady: () => !!(userData && userData.loaded && userData.available),
+  getSessions: () => userData.sessions,
+  today: () => todayStr(),
+  getStats: () => computeStats(userData.sessions, todayStr()),
+  workerUrl: WORKER_URL,
+  systemPrompt: () => currentSystemPrompt,
+  appContext: () => buildAppContext(),
+};
+import("./voice/voice-ui.mjs").then((m) => m.mountVoice(window.YogaiVoiceAPI)).catch((e) => console.warn("Voice control not loaded:", e));
+// <<< YOGAI-VOICE-HOOK END <<<
+
 </script>
 <script>
 /* ============================================================
