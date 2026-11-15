@@ -120,6 +120,11 @@ export function createContinuousMount({
   const pending = new Map();
   let readyWaiter = null;
   let heartbeatPausedUntil = 0;
+  // Recent gaps between heartbeat ticks (only recorded while armed). The page uses it to run pose checks as fast as it
+  // can without starving the servo heartbeat.
+  const recentGaps = [];
+  function noteGap(t, gap) { recentGaps.push([t, gap]); while (recentGaps.length && t - recentGaps[0][0] > 3000) recentGaps.shift(); }
+  function heartbeatGapMs() { const t = now(); let m = 0; for (const [ts, g] of recentGaps) if (t - ts <= 2000 && g > m) m = g; return m; }
   let lastRxMs = 0;
   let lastInvalidReady = null;
   let tickFaultReported = false;
@@ -278,6 +283,7 @@ export function createContinuousMount({
   async function tickInner() {
     const t = now();
     if (lastTickMs !== null && t - lastTickMs > 200) log('STALL', `${Math.round(t - lastTickMs)} ms since previous tick`);
+    if (lastTickMs !== null) noteGap(t, t - lastTickMs);
     const dt = lastTickMs === null ? TICK_MS : clamp(t - lastTickMs, 1, 200);
     lastTickMs = t;
 
@@ -564,6 +570,7 @@ export function createContinuousMount({
     setSettings, setCalibration, trimNeutral, saveToArduino, setCentreHere, confirmEstimate, pauseHeartbeat,
     tick, getState,
     getDiagnostics: () => diag.join('\n'),
+    getHeartbeatGapMs: heartbeatGapMs,
     isConnected: () => connected,
     isArmed: () => armed,
     isTracking: () => tracking,
