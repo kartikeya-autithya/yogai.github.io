@@ -9,7 +9,8 @@
  *  - ramp limiting and forced pass through neutral on direction reversal
  *  - soft travel limits from an APPROXIMATE estimate (no position feedback exists)
  */
-import { WebUsbCdcTransport, WebSerialTransport, findPersonCentre } from './arduino-mount.mjs';
+import { WebUsbCdcTransport, WebSerialTransport } from './arduino-mount.mjs';
+import { findPersonCentre } from './person-centre.mjs';
 import { commands, parseReply, nextSeq, PROTOCOL } from './continuous-protocol.mjs';
 import {
   CR_SETTINGS_DEFAULTS, sanitizeCrSettings, createVelocityController, createSpeedShaper, applySoftLimits,
@@ -520,9 +521,39 @@ export function createContinuousMount({
     emit();
   }
 
+  // Live tracking quality over the last 15 s, shown at the top of the USB log, so accuracy can be measured on the real device.
+  const trackLog = [];   // [time, errorX, errorY, torsoAnchor]; the errors are null when the person was not found
+  function noteTrack(t, centre) {
+    trackLog.push([t, centre ? centre.x - 0.5 : null, centre ? centre.y - 0.5 : null, centre && centre.source === 'torso' ? 1 : 0]);
+    while (trackLog.length && t - trackLog[0][0] > 15000) trackLog.shift();
+  }
+  function trackingStats() {
+    const t = now();
+    const rows = trackLog.filter((r) => t - r[0] <= 15000);
+    if (rows.length < 3) return null;
+    const found = rows.filter((r) => r[1] !== null);
+    const span = Math.max((rows[rows.length - 1][0] - rows[0][0]) / 1000, 0.5);
+    const dz = settings.deadZone;
+    const rms = (i) => Math.sqrt(found.reduce((a, r) => a + r[i] * r[i], 0) / Math.max(found.length, 1));
+    const centred = found.filter((r) => Math.abs(r[1]) < dz && Math.abs(r[2]) < dz).length;
+    return {
+      detectionsPerSec: found.length / span,
+      foundPct: (100 * found.length) / rows.length,
+      centredPct: found.length ? (100 * centred) / found.length : 0,
+      rmsX: rms(1), rmsY: rms(2),
+      torsoPct: found.length ? (100 * found.reduce((a, r) => a + r[3], 0)) / found.length : 0,
+    };
+  }
+  function trackingSummary() {
+    const s = trackingStats();
+    if (!s) return 'TRACKING: no data yet (start tracking and stand in view)';
+    return `TRACKING (last 15 s): ${s.detectionsPerSec.toFixed(1)} detections/s, person found ${s.foundPct.toFixed(0)}%, centred ${s.centredPct.toFixed(0)}% of the time, error ${(s.rmsX * 100).toFixed(1)}% sideways / ${(s.rmsY * 100).toFixed(1)}% vertical of the frame, torso anchor ${s.torsoPct.toFixed(0)}%`;
+  }
+
   function updateFromLandmarks(landmarks, timestampMs = now()) {
     if (!tracking || !connected) return null;
     const centre = findPersonCentre(landmarks, settings);
+    noteTrack(now(), centre);
     if (!centre) return null;
     controller.observe({ x: centre.x, y: centre.y, t: timestampMs });
     return centre;
@@ -571,6 +602,8 @@ export function createContinuousMount({
     tick, getState,
     getDiagnostics: () => diag.join('\n'),
     getHeartbeatGapMs: heartbeatGapMs,
+    getTrackingStats: trackingStats,
+    getTrackingSummary: trackingSummary,
     isConnected: () => connected,
     isArmed: () => armed,
     isTracking: () => tracking,
