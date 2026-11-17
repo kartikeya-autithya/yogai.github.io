@@ -1526,6 +1526,7 @@ import { PoseLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@m
 // imports) as of late 2025; esm.sh doesn't have this problem.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.108.1";
 import { createContinuousMount } from "./tracker/continuous-mount.mjs";
+import { initBioSense } from "./biosense/biosense-ui.mjs";
 import { createPoseSmoother } from "./pose-smoother.mjs";
 
 // ============================================================
@@ -4347,6 +4348,7 @@ const SOUNDS = {
 
 let landmarker=null, stream=null, rafId=null;
 let phoneMount = null;
+try { initBioSense(); } catch (e) { console.warn("BioSense could not start", e); }
 const poseSmoother = createPoseSmoother(); // adaptive smoothing of pose landmarks (less jitter, little lag)
 const videoEl=document.getElementById("webcam"), canvasEl=document.getElementById("overlay"), ctx=canvasEl.getContext("2d");
 
@@ -7050,6 +7052,11 @@ const MEDITATION_ASSETS = {
     $("med-hint").textContent = n ? n+" selected · total "+tot+" min" : "Select one or more pranayamas.";
   }
   window.showMeditation = function(){ buildUI(); goToScreen("meditation"); };
+  window.presetMeditation = function(name, minutes){
+    const i = PRANAYAMAS.findIndex(p => p[0] === name);
+    if(i >= 0){ Object.keys(sel).forEach(k => delete sel[k]); sel[i] = DURATIONS.includes(+minutes) ? +minutes : 5; }
+    window.showMeditation();
+  };
 
   /* ---------- audio (all on one Web Audio clock so pause/resume stays in sync) ---------- */
   const A = MEDITATION_ASSETS;
