@@ -11,7 +11,9 @@
 //   skip(), previous()      -> next / previous exercise
 //   pause(), resume()       -> NOT in YogAI yet (decision pending)
 //   currentPose()           -> { name, info } where info = POSE_INFO[name]
-//   showProgress(), showHistory(), showSettings()
+//   showProgress(), showHistory(), showSettings(), showPreferences(), showMeditation(), showLearn(),
+//   showChat(), showMessages(), showFavorites(), showAccount(), goHome(), endMeditation(), screen()
+//   adjustHold(delta), resetCounter(), repCount(), currentStep(), sessionTitle(s), relDay(date, today)
 //   isLoggedIn(), dataReady()
 //   getSessions()           -> userData.sessions       today() -> todayStr()
 //   getStats()              -> computeStats(...) result
@@ -30,17 +32,30 @@ function fmtDuration(sec) {
 
 const dayNum = (s) => { const [y, m, d] = s.split('-').map(Number); return Math.round(Date.UTC(y, m - 1, d) / 86400000); };
 
+const TODAY_RE = /\b(have|did) i (practi[cs]ed?|done)\b.*\btoday\b|\btoday\b.*\b(practi[cs]ed?)\b/;
+const LAST_RE = /\b(last|latest|most recent) (session|practice|workout)\b/;
+const POSES_RE = /\bhow many (different |unique )?(poses|asanas)\b/;
 const STATS_RE = /\b(consisten\w*|streak|how many (sessions|days|times)|how often|how much (time|have i)|total time|have i (practi[cs]ed|done))\b/;
 
 /** Answers "how consistent have I been this month?" etc. from the user's own saved data. Returns null if not a stats question. */
 export function answerStats(text, api) {
-  if (!STATS_RE.test(text)) return null;
+  if (!(STATS_RE.test(text) || TODAY_RE.test(text) || LAST_RE.test(text) || POSES_RE.test(text))) return null;
   if (!api.isLoggedIn?.()) return 'Please log in and I can tell you about your practice.';
   if (!api.dataReady?.()) return "I can't see your history right now.";
 
   const today = api.today();
   const all = api.getSessions() || [];
   const st = api.getStats?.() || {};
+
+  if (TODAY_RE.test(text)) return st.practicedToday ? "Yes, you've practiced today." : 'Not yet today.';
+  if (POSES_RE.test(text)) return `You've practiced ${plural(st.uniquePoses ?? 0, 'different pose')} so far.`;
+  if (LAST_RE.test(text)) {
+    const s0 = [...all].filter((x) => x.local_date).sort((a, b) => String(b.completed_at || b.local_date).localeCompare(String(a.completed_at || a.local_date)))[0];
+    if (!s0) return "I don't see any saved sessions yet.";
+    const title = api.sessionTitle?.(s0) || 'a session';
+    const when = api.relDay?.(s0.local_date, today) || s0.local_date;
+    return `Your last session was ${title}, ${fmtDuration(s0.duration_seconds || 0)}, ${when}.`;
+  }
   let period = 'all', label = 'overall';
   let inPeriod = () => true, daysInPeriod = null;
   if (/\bmonth\b/.test(text)) {
@@ -84,6 +99,19 @@ function explainCurrentPose(api) {
 export function createVoiceBindings(api) {
   const missing = (name) => `${name} isn't available by voice yet.`;
   const needPractice = () => (api.inPractice?.() ? null : 'No practice is running.');
+  // Leaving the practice screen ends/saves the session, so navigation by voice never does it silently.
+  const nav = (fn, say, { login = false } = {}) => async () => {
+    if (api.inPractice?.()) return 'Say end session first.';
+    if (login && !api.isLoggedIn?.()) return 'Please log in first.';
+    if (!fn) return "That isn't available by voice yet.";
+    fn(); return say;
+  };
+
+  const holdChange = (d) => {
+    const r = api.adjustHold?.(d);
+    if (r === undefined) return missing('Changing the hold time');
+    return r === false ? 'The hold time can only be changed on a timed pose.' : `Hold target is now ${plural(r, 'second')}.`;
+  };
 
   const actions = {
     start_practice: async () => {
@@ -112,15 +140,34 @@ export function createVoiceBindings(api) {
 
     explain_pose: async () => explainCurrentPose(api),
 
-    show_progress: async () => {
-      if (!api.isLoggedIn?.()) return 'Please log in to see your progress.';
-      api.showProgress(); return 'Here is your progress.';
+    show_progress: nav(api.showProgress, 'Here is your progress.', { login: true }),
+    open_history:  nav(api.showHistory, 'Opening your history.', { login: true }),
+    open_settings: nav(api.showSettings, 'Opening settings.'),
+    open_preferences: nav(api.showPreferences, 'Opening your preferences.', { login: true }),
+    open_meditation:  nav(api.showMeditation, 'Opening meditation. Pick a breathing exercise, then tap start.'),
+    open_learn:       nav(api.showLearn, 'Opening your Yog Kriyas.'),
+    open_chat:        nav(api.showChat, 'Opening the chat.'),
+    open_messages:    nav(api.showMessages, 'Opening messages.'),
+    open_favorites:   nav(api.showFavorites, 'Opening your favorites.', { login: true }),
+    open_account:     nav(api.showAccount, 'Opening your account.'),
+    go_home:          nav(api.goHome, 'Going home.'),
+
+    stop_meditation: async () => (api.screen?.() === 'meditation-screen' && api.endMeditation
+      ? (api.endMeditation(), 'Meditation stopped.') : 'No meditation is running.'),
+
+    hold_longer: async () => needPractice() ?? holdChange(+5),
+    hold_shorter: async () => needPractice() ?? holdChange(-5),
+    reset_counter: async () => needPractice() ?? (api.resetCounter?.() === false ? 'This exercise has no rep counter.' : (api.resetCounter ? 'Counter reset.' : missing('Resetting'))),
+    rep_count: async () => {
+      const n = needPractice(); if (n) return n;
+      const r = api.repCount?.();
+      return r === false || r === undefined ? "This exercise doesn't count reps." : `You're at ${plural(r, 'rep')}.`;
     },
-    open_history: async () => {
-      if (!api.isLoggedIn?.()) return 'Please log in to see your history.';
-      api.showHistory(); return 'Opening your history.';
+    which_pose: async () => {
+      const c = api.inPractice?.() ? api.currentStep?.() : null;
+      if (!c) return 'No practice is running.';
+      return c.total ? `You're on ${c.name}, step ${c.step} of ${c.total}.` : `You're on ${c.name}.`;
     },
-    open_settings: async () => { api.showSettings(); return 'Opening settings.'; },
   };
 
   const worker = api.workerUrl

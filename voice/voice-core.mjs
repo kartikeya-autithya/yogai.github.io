@@ -27,8 +27,7 @@ const DEFAULT_REPLIES = {
 };
 
 const HELP_TEXT =
-  'You can say: start my practice, pause, resume, skip, show my progress, open my history, ' +
-  'start pose detection, explain this pose, or open settings. You can also ask me questions.';
+  'Tap the mic and say things like: start my practice, skip, show my progress, open meditation, how consistent have I been this month, or ask me any yoga question.';
 
 export class VoiceAssistant extends EventTarget {
   /**
@@ -65,6 +64,10 @@ export class VoiceAssistant extends EventTarget {
     this._lastTextAt = 0;
     this._wakeLock = null;
     this._lastReply = '';
+    this._oneShot = false;
+    this._gotFinal = false;
+    this._audio = null;
+    try { if (localStorage.getItem('yogai.voice.muted') === '1') this.speakReplies = false; } catch {}
     this._onVis = () => {
       if (document.visibilityState === 'visible' && this._want) this._requestWakeLock();
     };
@@ -108,6 +111,79 @@ export class VoiceAssistant extends EventTarget {
   listenNow() {
     if (!this._want) return this.start().then(() => this._wake(''));
     this._wake('');
+  }
+
+  /** Google-search-style mic: listen for ONE command (no wake phrase), answer, then switch the mic off. Tap again to cancel. */
+  listenOnce() {
+    if (!VoiceAssistant.supported) {
+      this._emit('error', { code: 'unsupported', message: 'Speech recognition is not supported in this browser.' });
+      return false;
+    }
+    if (this.state !== 'off') { this.cancel(); return false; }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const rec = new SR();
+    rec.lang = this.lang;
+    rec.continuous = false;
+    rec.interimResults = true;
+    rec.maxAlternatives = 1;
+    this._oneShot = true; this._gotFinal = false; this._rec = rec;
+    this._setState('awake');
+    clearTimeout(this._awakeTimer);
+    this._awakeTimer = setTimeout(() => { if (!this._gotFinal) this._timeout(); }, 10000);
+
+    rec.onresult = (e) => {
+      let interim = '', fin = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) fin += r[0].transcript; else interim += r[0].transcript;
+      }
+      if (interim && !this._gotFinal) this._emit('interim', { text: interim });
+      if (fin && !this._gotFinal) {
+        this._gotFinal = true;
+        clearTimeout(this._awakeTimer);
+        this._process(normalize(fin));
+      }
+    };
+    rec.onerror = (e) => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        this._emit('error', { code: 'permission', message: 'Microphone permission was denied.' });
+        this.cancel();
+      } else if (e.error === 'audio-capture') {
+        this._emit('error', { code: 'no-mic', message: 'No microphone found.' });
+        this.cancel();
+      } else if (e.error === 'network') {
+        this._emit('error', { code: 'network', message: 'Speech service unreachable.' });
+        this.cancel();
+      }
+      // 'no-speech' / 'aborted': onend handles it
+    };
+    rec.onend = () => {
+      if (this._rec === rec) this._rec = null;
+      if (!this._gotFinal && this.state === 'awake' && this._oneShot) this._timeout();
+    };
+    try { rec.start(); } catch { this.cancel(); }
+    return true;
+  }
+
+  _timeout() {
+    this._emit('timeout', {});
+    this.cancel();
+  }
+
+  /** Stop listening / speaking right now and switch the mic off. */
+  cancel() {
+    clearTimeout(this._awakeTimer);
+    this._oneShot = false;
+    try { this._rec?.abort(); } catch {}
+    this._rec = null;
+    try { this._audio?.pause(); } catch {}
+    if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
+    if (!this._want) this._setState('off');
+  }
+
+  _setMuted(on) {
+    this.speakReplies = !on;
+    try { on ? localStorage.setItem('yogai.voice.muted', '1') : localStorage.removeItem('yogai.voice.muted'); } catch {}
   }
 
   /** Feed text as if it had been spoken (typed testing, or accessibility input). */
@@ -212,16 +288,25 @@ export class VoiceAssistant extends EventTarget {
       reply = 'Sorry, something went wrong.';
     }
     if (this.state === 'off') return;
-    if (reply === '__sleep__') { this._setState('idle'); return; }
-    this._setState('awake');
-    this._armAwakeTimer();
+    if (reply === '__sleep__') { this._oneShot = false; this._setState(this._want ? 'idle' : 'off'); return; }
+    this._setState(this._oneShot ? 'speaking' : 'awake');
+    if (!this._oneShot) this._armAwakeTimer();
     if (reply) await this._speak(reply);
+    if (this._oneShot) {            // tap-to-talk: one command, then the mic is fully off again
+      this._oneShot = false;
+      clearTimeout(this._awakeTimer);
+      this._setState('off');
+      return;
+    }
     this._armAwakeTimer(); // window starts after the reply finishes
   }
 
   async _run(intent, text) {
     if (intent.name === 'stop_listening') { await this._speak('Okay, going quiet.'); return '__sleep__'; }
     if (intent.name === 'help') return HELP_TEXT;
+    if (intent.name === 'repeat') return this._lastReply || 'I have nothing to repeat yet.';
+    if (intent.name === 'mute_replies') { this._setMuted(true); return "Okay, I'll stay quiet and show replies on screen."; }
+    if (intent.name === 'unmute_replies') { this._setMuted(false); return 'Voice replies are back on.'; }
     if (intent.name === 'change_voice') return this.nextVoice() ? 'How about this voice?' : "I only have one voice on this device.";
     const fn = this.actions[intent.name];
     if (!fn) return "I can't do that yet.";
@@ -292,6 +377,7 @@ export class VoiceAssistant extends EventTarget {
     return new Promise((resolve, reject) => {
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
+      this._audio = audio;
       const end = (fn) => (arg) => { URL.revokeObjectURL(url); fn(arg); };
       audio.onended = end(resolve);
       audio.onerror = end(reject);
