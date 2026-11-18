@@ -91,7 +91,8 @@ export const zToScore = (z) => 100 * sigmoid(1.1 * (clamp(z, -3, 3) - 0.25));   
  * features: { hr, rmssd, scl, scrRate, temp, tempSlope }  (NaN = not available)
  * baseline: { hr, rmssd, scl, scrRate, temp } or null; sessionRef: { scl } used for skin conductance when no baseline exists
  */
-export function scoreStress(f, baseline, sessionRef = {}) {
+export function scoreStress(f, baseline, sessionRef = {}, opts = {}) {
+  const W = { ...WEIGHTS, temp: opts.tempWeight ?? WEIGHTS.temp };
   const b = baseline || null;
   const hr0 = b?.hr ?? PRIORS.hr; const rm0 = b?.rmssd ?? PRIORS.rmssd; const t0 = b?.temp ?? NaN; const sr0 = b?.scrRate ?? PRIORS.scrRate;
   const scl0 = b?.scl ?? sessionRef.scl ?? NaN;
@@ -106,14 +107,14 @@ export function scoreStress(f, baseline, sessionRef = {}) {
   if (tparts.length) z.temp = mean(tparts);
 
   let wsum = 0; let acc = 0;
-  for (const k of Object.keys(z)) { const zz = clamp(z[k], -3, 3); z[k] = zz; acc += WEIGHTS[k] * zz; wsum += WEIGHTS[k]; }
+  for (const k of Object.keys(z)) { const zz = clamp(z[k], -3, 3); z[k] = zz; acc += W[k] * zz; wsum += W[k]; }
   if (wsum < 0.3) return { score: NaN, z, used: Object.keys(z), confidence: 0, driver: null };   // not enough channels to say anything
   const zc = acc / wsum;
   const used = Object.keys(z);
   // Without a personal baseline the estimate leans on population averages, so confidence is capped at "Medium".
   const confidence = clamp(0.1 + (z.hr !== undefined ? 0.1 : 0) + (z.hrv !== undefined ? 0.2 : 0) + (z.scl !== undefined ? 0.15 : 0)
     + (z.scr !== undefined ? 0.05 : 0) + (z.temp !== undefined ? 0.05 : 0) + (b ? 0.35 : 0), 0, 1);
-  const driver = used.reduce((best, k) => (best === null || WEIGHTS[k] * z[k] > WEIGHTS[best] * z[best] ? k : best), null);
+  const driver = used.reduce((best, k) => (best === null || W[k] * z[k] > W[best] * z[best] ? k : best), null);
   return { score: zToScore(zc), z, zCombined: zc, used, confidence, driver };
 }
 
@@ -182,11 +183,11 @@ const readJson = (storage, key) => { try { const t = storage?.getItem(key); retu
 const writeJson = (storage, key, v) => { try { storage?.setItem(key, JSON.stringify(v)); } catch { /* storage full or blocked: ignore */ } };
 
 export function createBioSense({ now = () => Date.now(), storage = null } = {}) {
-  let hrs = []; let temps = []; let gsrs = []; let ibis = [];          // [{t, v}]
+  let hrs = []; let temps = []; let gsrs = []; let ibis = []; let hums = [];   // [{t, v}]
   let startedAt = null; let lastSampleAt = null; let validSeconds = new Set();
   let smoothScore = NaN; let lastBand = null;
   let baseline = readJson(storage, BASELINE_KEY);
-  let config = { invertGsr: false, ...(readJson(storage, CONFIG_KEY) || {}) };
+  let config = { invertGsr: false, tempMode: 'air', ...(readJson(storage, CONFIG_KEY) || {}) };   // tempMode: 'air' (a DHT22 reads the air next to the skin) or 'skin' (a sensor touching the skin)
   let sessionRef = {};
   let calibrating = null;                                             // { startedAt, hr: [], ... }
   const history = [];                                                 // [{t, score}] one point every few seconds
@@ -194,7 +195,7 @@ export function createBioSense({ now = () => Date.now(), storage = null } = {}) 
   const trim = (arr, t) => { while (arr.length && t - arr[0].t > WINDOW_MS) arr.shift(); };
 
   function start() {
-    hrs = []; temps = []; gsrs = []; ibis = []; startedAt = now(); lastSampleAt = null; validSeconds = new Set();
+    hrs = []; temps = []; gsrs = []; ibis = []; hums = []; startedAt = now(); lastSampleAt = null; validSeconds = new Set();
     smoothScore = NaN; lastBand = null; sessionRef = {}; history.length = 0;
   }
 
@@ -206,10 +207,11 @@ export function createBioSense({ now = () => Date.now(), storage = null } = {}) 
     const list = Array.isArray(msg.ibis) ? msg.ibis : (msg.ibi !== undefined ? [msg.ibi] : []);
     for (const v of list) if (finite(v) && v >= 250 && v <= 2000) { ibis.push({ t, v }); used = true; if (!finite(msg.hr)) hrs.push({ t, v: 60000 / v }); }
     if (finite(msg.temp) && msg.temp >= 20 && msg.temp <= 45) { temps.push({ t, v: msg.temp }); used = true; }
+    if (finite(msg.hum) && msg.hum >= 0 && msg.hum <= 100) { hums.push({ t, v: msg.hum }); used = true; }
     if (finite(msg.gsr) && msg.gsr >= 0) { gsrs.push({ t, v: config.invertGsr ? 1 / Math.max(msg.gsr, 1e-6) : msg.gsr }); used = true; }
     if (!used) return false;
     lastSampleAt = t;
-    trim(hrs, t); trim(temps, t); trim(gsrs, t); trim(ibis, t);
+    trim(hrs, t); trim(temps, t); trim(gsrs, t); trim(ibis, t); trim(hums, t);
     if (startedAt !== null && (hrs.length || gsrs.length)) validSeconds.add(Math.floor((t - startedAt) / 1000));
     if (calibrating) { calibrating.n += 1; }
     return true;
@@ -230,6 +232,7 @@ export function createBioSense({ now = () => Date.now(), storage = null } = {}) 
       scrRate: scrPerMinute(g60),
       temp: t60.length >= 3 ? median(t60.slice(-10).map((p) => p.v)) : NaN,
       tempSlope: slopePerMin(t60),
+      hum: since(hums, t, 60000).length >= 2 ? median(since(hums, t, 60000).slice(-6).map((p) => p.v)) : NaN,
     };
   }
 
@@ -243,7 +246,7 @@ export function createBioSense({ now = () => Date.now(), storage = null } = {}) 
     } else if (startedAt !== null && !g.length) issues.push({ id: 'gsr', text: 'No skin-conductance signal. Check the electrodes and wiring.' });
     const tt = since(temps, t, 15000);
     if (startedAt !== null && !tt.length) issues.push({ id: 'temp', text: 'No temperature reading. Check the temperature sensor.' });
-    else if (tt.length && median(tt.map((p) => p.v)) < 28) issues.push({ id: 'temp', text: 'Temperature is below normal skin range. The sensor may not be touching the skin.' });
+    else if (config.tempMode === 'skin' && tt.length && median(tt.map((p) => p.v)) < 28) issues.push({ id: 'temp', text: 'Temperature is below normal skin range. The sensor may not be touching the skin.' });
     if (ibis.length === 0 && hrs.length) issues.push({ id: 'hrv', text: 'Only heart rate is arriving, so heart-rate variability cannot be used. Send beat-to-beat intervals ("ibi") for a better estimate.' });
     return issues;
   }
@@ -261,7 +264,7 @@ export function createBioSense({ now = () => Date.now(), storage = null } = {}) 
   function analyze(t = now()) {
     const f = features(t);
     if (!finite(sessionRef.scl) && finite(f.scl) && startedAt !== null && t - startedAt >= 20000) sessionRef = { scl: f.scl };
-    const r = scoreStress(f, baseline, sessionRef);
+    const r = scoreStress(f, baseline, sessionRef, { tempWeight: config.tempMode === 'air' ? 0.04 : 0.10 });
     r.features = f;
     if (finite(r.score)) {
       smoothScore = finite(smoothScore) ? smoothScore + 0.3 * (r.score - smoothScore) : r.score;
@@ -354,4 +357,40 @@ export function createSocketSource(url, { WebSocketCtor = (typeof WebSocket === 
     },
     stop() { if (ws) { try { ws.close(); } catch { /* ignore */ } ws = null; } },
   };
+}
+
+/**
+ * The Arduino Uno band over USB, through the same WebUSB / Web Serial transports the phone tracker uses (passed in so this file
+ * stays free of browser code). The Uno prints one JSON object per line; anything that is not JSON (boot noise) is ignored, and
+ * {"band": ...} status lines go to onBand.
+ */
+export function createUsbSource({ WebUsb, WebSerial, nav = (typeof navigator !== 'undefined' ? navigator : null), onSamples, onBand, onError, onStatus, onClose, baudRate = 115200, bootWaitMs = 2500 } = {}) {
+  let transport = null; let closed = false;
+  function choose() {
+    const android = /Android/i.test(nav?.userAgent || '');
+    if (android && nav?.usb?.requestDevice) return 'web-usb';
+    if (nav?.serial?.requestPort) return 'web-serial';
+    if (nav?.usb?.requestDevice) return 'web-usb';
+    return 'none';
+  }
+  function handleLine(line) {
+    const a = String(line).indexOf('{'); const b = String(line).lastIndexOf('}');
+    if (a < 0 || b < a) return;
+    let j; try { j = JSON.parse(String(line).slice(a, b + 1)); } catch { return; }
+    if (!j || typeof j !== 'object') return;
+    if (j.band) onBand?.(j); else onSamples?.([j]);
+  }
+  async function start() {
+    closed = false;
+    const kind = choose();
+    if (kind === 'none') { onError?.(new Error('This browser supports neither WebUSB nor Web Serial. Use Chrome on Android or on a computer.')); return false; }
+    const Ctor = kind === 'web-usb' ? WebUsb : WebSerial;
+    transport = new Ctor({
+      baudRate, bootWaitMs, onStatus: (m) => onStatus?.(m), onLine: handleLine,
+      onDisconnect: (e) => { if (!closed) { onError?.(e instanceof Error ? e : new Error('The Arduino was disconnected.')); onClose?.(); } },
+    });
+    try { await transport.connect(); return true; } catch (e) { onError?.(e); return false; }
+  }
+  async function stop() { closed = true; try { await transport?.disconnect?.(); } catch { /* already gone */ } transport = null; }
+  return { start, stop, choose };
 }

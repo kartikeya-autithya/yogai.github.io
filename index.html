@@ -6441,7 +6441,8 @@ const DB_ICONS = {
   gear:["M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z","M12 3v2.5","M12 18.5V21","M3 12h2.5","M18.5 12H21","M5.6 5.6l1.8 1.8","M16.6 16.6l1.8 1.8","M5.6 18.4l1.8-1.8","M16.6 7.4l1.8-1.8"],
   sparkle:["M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z","M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"],
   meditate:["M12 4a2 2 0 1 0 0 4 2 2 0 0 0 0-4z","M12 9v4","M6 17c2.5-.5 4-2.2 6-4 2 1.8 3.5 3.5 6 4","M4 20c3-1.2 5-1.2 8-1.2s5 0 8 1.2"],
-  star:["M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"]
+  star:["M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"],
+  pulse:["M3 12h4l2-5 4 10 2-5h6"]
 };
 let dbMsgBadge = null;
 function dbEl(tag, cls, text){ const e = document.createElement(tag); if(cls) e.className = cls; if(text != null) e.textContent = String(text); return e; }
@@ -6528,7 +6529,7 @@ function dbQuick(c){
   const grid = dbEl("div", "db-quick"), plan = c.plan && c.plan.steps.length ? c.plan : null;
   [["mint", "play", "Start a Practice", plan ? plan.estMinutes + " min " + String(plan.goalLabel).toLowerCase() + " practice, chosen for you." : "Jump into today's session.", () => startTodayPractice()],
    ["blue", "sparkle", "Suggest a Routine", "Choose a goal and time for a plan that respects your safety filters.", () => openSavedRoutines()],
-   ["gold", "pose", "Explore Poses", "Browse poses, their focus and the cue used for form feedback.", () => yaNav("explore")],
+   ["gold", "pulse", "BioSense", "Read your stress from pulse, skin and temperature, and get a pranayama for it.", () => showBioSense()],
    ["cyan", "chat", "Chat with Yoga Assistant", "Ask questions and get guidance for your practice.", () => showChat()]
   ].forEach(([tone, ico, title, desc, fn]) => {
     const b = dbBtn("db-action db-" + tone, null, fn), i = dbEl("span", "db-action-ico"); i.appendChild(dbIcon(ico));
