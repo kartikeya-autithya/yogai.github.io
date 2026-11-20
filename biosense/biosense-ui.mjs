@@ -123,7 +123,7 @@ export function initBioSense({ document: doc = document, storage = (typeof local
   const bio = createBioSense({ now, storage });
   const cfgKey = 'yogai.biosense.ui.v1';
   const saved = (() => { try { return JSON.parse(storage?.getItem(cfgKey) || 'null') || {}; } catch { return {}; } })();
-  const ui = { source: saved.source || 'usb', url: saved.url || '', running: false, view: '', error: '', srcObj: null, demoTimer: null, tickTimer: null, override: null, baselineRun: false, demoT0: 0, notice: '', connecting: false, statusMsg: '', band: null };
+  const ui = { source: saved.source || 'usb', url: saved.url || '', running: false, view: '', error: '', srcObj: null, demoTimer: null, tickTimer: null, override: null, baselineRun: false, demoT0: 0, notice: '', connecting: false, statusMsg: '', band: null, usbConn: null, usbBusy: false, usbError: '', usbMsg: '', live: {}, connTimer: null };
   const persist = () => { try { storage?.setItem(cfgKey, JSON.stringify({ source: ui.source, url: ui.url })); } catch { /* ignore */ } };
 
   // ---- DOM: style, screen, home card
@@ -147,23 +147,24 @@ export function initBioSense({ document: doc = document, storage = (typeof local
   }
 
   // ---- data source
-  function ingestList(list) { for (const s of list) bio.ingest(s); }
+  function ingestList(list) {
+    const t = now();
+    for (const s of list) {
+      bio.ingest(s);
+      if (fin(s.hr) || fin(s.ibi)) ui.live.hr = t;
+      if (fin(s.gsr)) ui.live.gsr = t;
+      if (fin(s.temp)) ui.live.temp = t;
+    }
+  }
   function startSource() {
-    stopSource(); ui.error = ''; ui.band = null; ui.connecting = false; ui.statusMsg = '';
+    stopSource(); ui.error = ''; if (!ui.usbConn) ui.band = null; ui.connecting = false; ui.statusMsg = '';
     if (ui.source.startsWith('demo')) {
       const sc = ui.source.split('-')[1] || 'mixed'; ui.demoT0 = now();
       ui.demoTimer = setInterval(() => bio.ingest(demoSample((now() - ui.demoT0) / 1000, sc)), 250);
     } else if (ui.source === 'usb') {
-      // Called straight from the Measure button, so the browser still treats it as a user action and shows the device chooser.
-      const make = usbFactory || ((cb) => createUsbSource({ WebUsb: WebUsbCdcTransport, WebSerial: WebSerialTransport, ...cb }));
-      const src = make({
-        onSamples: ingestList, onBand: (b) => { ui.band = b; },
-        onStatus: (m) => { if (typeof m === 'string') ui.statusMsg = m; },
-        onError: (e) => { ui.error = explainUsb(e); ui.connecting = false; },
-        onClose: () => { ui.connecting = false; },
-      });
-      ui.srcObj = src; ui.connecting = true;
-      Promise.resolve(src.start()).then(() => { ui.connecting = false; render(); });
+      // Already connected with the Connect Arduino button: data is flowing, nothing to do.
+      // Not connected yet: ask for the Arduino now (still inside the Measure click, so the browser allows the chooser).
+      if (!ui.usbConn) { ui.connecting = true; connectUsb().then(() => { ui.connecting = false; render(); }); }
     } else if (ui.source === 'poll') {
       ui.srcObj = createPollSource(ui.url, { onSamples: ingestList, onError: (e) => { ui.error = explain(e); } }); ui.srcObj.start();
     } else if (ui.source === 'socket') {
@@ -171,9 +172,51 @@ export function initBioSense({ document: doc = document, storage = (typeof local
     }
   }
   function stopSource() { if (ui.demoTimer) { clearInterval(ui.demoTimer); ui.demoTimer = null; } if (ui.srcObj) { Promise.resolve(ui.srcObj.stop()).catch(() => {}); ui.srcObj = null; } ui.connecting = false; }
+  // ---- one-tap Arduino connection (stays open until Disconnect, Back, or unplugging)
+  function startConnTimer() { stopConnTimer(); ui.connTimer = setInterval(refreshUsbPanel, 1000); }
+  function stopConnTimer() { if (ui.connTimer) { clearInterval(ui.connTimer); ui.connTimer = null; } }
+  function refreshUsbPanel() { const el = view.querySelector('#bs-usb'); if (el && ui.view === 'connect') el.innerHTML = usbPanelHtml(); }
+  function usbPanelHtml() {
+    const err = ui.usbError ? `<div class="bs-err">${esc(ui.usbError)}</div>` : '';
+    if (ui.usbBusy) return `<div class="bs-note" style="margin-top:0">Connecting. Choose your Arduino in the pop-up. ${esc(ui.usbMsg || 'The board restarts when it connects, which takes a couple of seconds.')}</div>`;
+    if (!ui.usbConn) {
+      return `<div class="bs-row" style="margin-top:0"><button type="button" class="btn-primary" data-bs="usb-connect">Connect Arduino</button></div>
+        <div class="bs-note">Plug in your BioSense Arduino, tap Connect Arduino and choose it in the pop-up. Close the tracker's Arduino panel first, because only one page can use the Arduino at a time.</div>${err}`;
+    }
+    const t = now(); const fresh = (k) => ui.live[k] && t - ui.live[k] < 6000;
+    const row = (good, label, hint) => `<div class="bs-note" style="margin-top:4px">${good ? '✓' : '…'} ${label}${good ? '' : ' · ' + hint}</div>`;
+    const b = ui.band || {}; const warn = [];
+    if (b.ppg === 0) warn.push('The MAX30102 is not found. Check VIN to 3.3V and SDA/SCL on A4/A5.');
+    if (b.dht === 0) warn.push('The DHT22 is not responding. Check its data wire on pin 2.');
+    return `<div class="bs-note" style="margin-top:0"><b>✓ Arduino connected</b></div>
+      ${row(fresh('hr'), 'Pulse', 'rest the sensor snugly on your forehead')}
+      ${row(fresh('gsr'), 'Skin conductance', 'no signal yet')}
+      ${row(fresh('temp'), 'Temperature', 'updates every few seconds')}
+      ${warn.map((w) => `<div class="bs-warn">${esc(w)}</div>`).join('')}
+      <div class="bs-row"><button type="button" class="btn-secondary" data-bs="usb-disconnect">Disconnect</button></div>${err}`;
+  }
+  function connectUsb() {
+    if (ui.usbConn || ui.usbBusy) return Promise.resolve(!!ui.usbConn);
+    ui.usbBusy = true; ui.usbError = ''; ui.usbMsg = ''; ui.live = {}; ui.band = null;
+    const make = usbFactory || ((cb) => createUsbSource({ WebUsb: WebUsbCdcTransport, WebSerial: WebSerialTransport, ...cb }));
+    const src = make({
+      onSamples: ingestList,
+      onBand: (b) => { ui.band = b; },
+      onStatus: (m) => { if (typeof m === 'string') { ui.usbMsg = m; ui.statusMsg = m; refreshUsbPanel(); } },
+      onError: (e) => { ui.usbConn = null; ui.usbBusy = false; ui.usbError = explainUsb(e); if (ui.running) ui.error = ui.usbError; stopConnTimer(); refreshUsbPanel(); },
+      onClose: () => { ui.usbConn = null; ui.usbBusy = false; stopConnTimer(); refreshUsbPanel(); },
+    });
+    refreshUsbPanel();
+    return Promise.resolve(src.start()).then((ok) => { ui.usbBusy = false; if (ok) { ui.usbConn = src; startConnTimer(); } refreshUsbPanel(); return !!ok; });
+  }
+  function disconnectUsb() {
+    const c = ui.usbConn; ui.usbConn = null; ui.usbBusy = false; ui.live = {}; ui.band = null; stopConnTimer();
+    if (c) Promise.resolve(c.stop()).catch(() => {});
+    refreshUsbPanel();
+  }
   function explainUsb(e) {
     const m = e && e.message ? e.message : String(e);
-    if (/no device selected|notfound|no compatible devices/i.test(m)) return 'No Arduino was chosen. Tap Measure now and pick your Arduino in the pop-up.';
+    if (/no device selected|notfound|no compatible devices/i.test(m)) return 'No Arduino was chosen. Tap Connect Arduino and pick your Arduino in the pop-up.';
     if (/access denied|securityerror|networkerror|unable to claim|busy/i.test(m)) return 'The Arduino is in use by another app or tab (for example the Arduino app or the tracker). Close it and try again.';
     return m;
   }
@@ -203,7 +246,7 @@ export function initBioSense({ document: doc = document, storage = (typeof local
         ${[['usb', 'Arduino (USB)'], ['demo-mixed', 'Demo (mixed)'], ['demo-calm', 'Demo (calm)'], ['demo-stressed', 'Demo (stressed)']]
     .map(([k, l]) => `<button type="button" class="bs-chip${ui.source === k ? ' on' : ''}" data-bs-src="${k}">${l}</button>`).join('')}
       </div>
-      ${ui.source === 'usb' ? '<div class="bs-note" style="margin-top:0">Plug the Arduino into the phone or computer, then tap Measure now and choose it in the pop-up. It uses the same USB connection as the phone tracker, so close the tracker panel first.</div>' : ''}
+      ${ui.source === 'usb' ? `<div id="bs-usb">${usbPanelHtml()}</div>` : ''}
       <details class="bs-det"${ui.source === 'poll' || ui.source === 'socket' ? ' open' : ''}><summary>Wi-Fi band (advanced)</summary>
         <div class="bs-chips" style="margin-top:10px">${[['poll', 'https link'], ['socket', 'WebSocket']].map(([k, l]) => `<button type="button" class="bs-chip${ui.source === k ? ' on' : ''}" data-bs-src="${k}">${l}</button>`).join('')}</div>
         ${ui.source === 'poll' || ui.source === 'socket' ? `<input class="bs-input" id="bs-url" inputmode="url" autocomplete="off" placeholder="${ui.source === 'poll' ? 'https://your-band-address/data' : 'wss://your-band-address'}" value="${esc(ui.url)}" aria-label="Band address">` : ''}
@@ -217,7 +260,7 @@ export function initBioSense({ document: doc = document, storage = (typeof local
       <details class="bs-det"><summary>What the band sends</summary>
         <div style="margin-top:8px">Send JSON from the band, one object or a list, a few times per second. Any subset of fields works:</div>
         <pre>{"hr": 72, "ibi": 830, "temp": 34.1, "gsr": 412}</pre>
-        <div>hr: beats per minute · ibi: beat-to-beat interval in ms (needed for heart-rate variability) · temp: °C · hum: relative humidity % · gsr: skin conductance, any unit where higher means more conductive. The Arduino sketch for the PulseSensor, DHT22 and LM393 module sends exactly this.</div></details>
+        <div>hr: beats per minute · ibi: beat-to-beat interval in ms (needed for heart-rate variability) · temp: °C · hum: relative humidity % · gsr: skin conductance, any unit where higher means more conductive. The BioSense Arduino sketch (MAX30102, LM393 skin module and DHT22) sends exactly this.</div></details>
       <div class="bs-note">BioSense is a wellness estimate from simple sensors, not a medical device or a diagnosis.</div>`;
   }
 
@@ -316,7 +359,7 @@ export function initBioSense({ document: doc = document, storage = (typeof local
   // ---- events (delegated)
   screen.addEventListener('click', (e) => {
     const t = e.target.closest('[data-bs],[data-bs-src],[data-bs-alt],[data-bs-practice]'); if (!t) return;
-    if (t.dataset.bsSrc) { ui.source = t.dataset.bsSrc; persist(); renderConnect(); return; }
+    if (t.dataset.bsSrc) { ui.source = t.dataset.bsSrc; if (ui.source !== 'usb') disconnectUsb(); persist(); renderConnect(); return; }
     if (t.dataset.bsAlt) { ui.override = t.dataset.bsAlt; ui.view = ''; render(); return; }
     if (t.dataset.bsPractice) {
       const p = PRANAYAMA[t.dataset.bsPractice]; const m = +t.dataset.min;
@@ -324,7 +367,9 @@ export function initBioSense({ document: doc = document, storage = (typeof local
       return;
     }
     switch (t.dataset.bs) {
-      case 'back': win.goToScreen('home'); break;
+      case 'back': if (ui.running) stop(); disconnectUsb(); win.goToScreen('home'); break;
+      case 'usb-connect': connectUsb(); break;
+      case 'usb-disconnect': disconnectUsb(); break;
       case 'start': { const u = view.querySelector('#bs-url'); if (u) ui.url = u.value.trim(); persist(); begin(false); break; }
       case 'baseline': { const u = view.querySelector('#bs-url'); if (u) ui.url = u.value.trim(); persist(); if (ui.running) stop(); begin(true); break; }
       case 'again': begin(false); break;
