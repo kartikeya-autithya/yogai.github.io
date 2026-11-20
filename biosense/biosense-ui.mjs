@@ -173,36 +173,68 @@ export function initBioSense({ document: doc = document, storage = (typeof local
   }
   function stopSource() { if (ui.demoTimer) { clearInterval(ui.demoTimer); ui.demoTimer = null; } if (ui.srcObj) { Promise.resolve(ui.srcObj.stop()).catch(() => {}); ui.srcObj = null; } ui.connecting = false; }
   // ---- one-tap Arduino connection (stays open until Disconnect, Back, or unplugging)
-  function startConnTimer() { stopConnTimer(); ui.connTimer = setInterval(refreshUsbPanel, 1000); }
+  function startConnTimer() { stopConnTimer(); ui.connTimer = setInterval(tickUsbPanel, 1000); }
   function stopConnTimer() { if (ui.connTimer) { clearInterval(ui.connTimer); ui.connTimer = null; } }
   function refreshUsbPanel() { const el = view.querySelector('#bs-usb'); if (el && ui.view === 'connect') el.innerHTML = usbPanelHtml(); }
-  function usbPanelHtml() {
-    const err = ui.usbError ? `<div class="bs-err">${esc(ui.usbError)}</div>` : '';
-    if (ui.usbBusy) return `<div class="bs-note" style="margin-top:0">Connecting. Choose your Arduino in the pop-up. ${esc(ui.usbMsg || 'The board restarts when it connects, which takes a couple of seconds.')}</div>`;
-    if (!ui.usbConn) {
-      return `<div class="bs-row" style="margin-top:0"><button type="button" class="btn-primary" data-bs="usb-connect">Connect Arduino</button></div>
-        <div class="bs-note">Plug in your BioSense Arduino, tap Connect Arduino and choose it in the pop-up. Close the tracker's Arduino panel first, because only one page can use the Arduino at a time.</div>${err}`;
-    }
-    const t = now(); const fresh = (k) => ui.live[k] && t - ui.live[k] < 6000;
-    const row = (good, label, hint) => `<div class="bs-note" style="margin-top:4px">${good ? '✓' : '…'} ${label}${good ? '' : ' · ' + hint}</div>`;
-    const b = ui.band || {}; const warn = [];
-    if (b.ppg === 0) warn.push('The MAX30102 is not found. Check VIN to 3.3V and SDA/SCL on A4/A5.');
-    if (b.dht === 0) warn.push('The DHT22 is not responding. Check its data wire on pin 2.');
-    return `<div class="bs-note" style="margin-top:0"><b>✓ Arduino connected</b></div>
-      ${row(fresh('hr'), 'Pulse', 'rest the sensor snugly on your forehead')}
-      ${row(fresh('gsr'), 'Skin conductance', 'no signal yet')}
-      ${row(fresh('temp'), 'Temperature', 'updates every few seconds')}
-      ${warn.map((w) => `<div class="bs-warn">${esc(w)}</div>`).join('')}
-      <div class="bs-row"><button type="button" class="btn-secondary" data-bs="usb-disconnect">Disconnect</button></div>${err}`;
+  // Cheap refresh (pills + live checklist only) so the buttons are never re-created under the user's finger.
+  function tickUsbPanel() {
+    const p = view.querySelector('#bs-usb-pills'); const l = view.querySelector('#bs-usb-live');
+    if (p && l && ui.view === 'connect') { p.innerHTML = usbPillsHtml(); l.innerHTML = usbLiveHtml(); }
   }
-  function connectUsb() {
+  function usbFresh(k) { return !!ui.live[k] && now() - ui.live[k] < 6000; }
+  function usbKindLabel() { const k = ui.usbConn && ui.usbConn.choose ? ui.usbConn.choose() : ''; return k === 'web-serial' ? 'Web Serial' : k === 'web-usb' ? 'WebUSB' : ''; }
+  function usbPillsHtml() {
+    const conn = !!ui.usbConn; const n = ['hr', 'gsr', 'temp'].filter(usbFresh).length;
+    const pill = (ok, text) => `<span class="status-pill ${ok ? 'status-correct' : 'status-adjust'}">${text}</span>`;
+    return `<div class="ya-mount-status-row">
+      ${pill(conn, ui.usbBusy ? 'CONNECTING' : conn ? 'CONNECTED' : 'NOT CONNECTED')}
+      <span class="chip">USB transport: ${esc(usbKindLabel() || 'not selected')}</span>
+      ${pill(conn && n === 3, !conn ? 'NO DATA' : n === 3 ? 'ALL SENSORS LIVE' : `SENSORS ${n}/3`)}
+    </div>`;
+  }
+  function usbLiveHtml() {
+    const conn = !!ui.usbConn;
+    const msg = ui.usbBusy ? (ui.usbMsg || 'Connecting. Choose your Arduino in the pop-up. The board restarts when it connects, which takes a couple of seconds.')
+      : conn ? 'Connected. Put the band on and wait for the sensors below.' : (ui.usbError || 'Not connected. Plug the Arduino in with the USB cable.');
+    let html = `<div class="hint" role="status" aria-live="polite"${ui.usbError && !conn ? ' style="color:var(--danger)"' : ''}>${esc(msg)}</div>`;
+    if (!conn) return html;
+    const row = (good, label, hint) => `<div class="bs-note" style="margin-top:4px">${good ? '✓' : '…'} ${label}${good ? '' : ' · ' + hint}</div>`;
+    const b = ui.band || {};
+    html += row(usbFresh('hr'), 'Pulse', 'rest the sensor snugly on your forehead')
+      + row(usbFresh('gsr'), 'Skin conductance', 'no signal yet')
+      + row(usbFresh('temp'), 'Temperature', 'updates every few seconds');
+    if (b.ppg === 0) html += '<div class="bs-warn">The MAX30102 is not found. Check VIN to 3.3V and SDA/SCL on A4/A5.</div>';
+    if (b.dht === 0) html += '<div class="bs-warn">The DHT22 is not responding. Check its data wire on pin 2.</div>';
+    return html;
+  }
+  function usbPanelHtml() {
+    const conn = !!ui.usbConn; const off = conn || ui.usbBusy ? ' disabled' : '';
+    return `<div class="panel-box" style="margin-top:12px">
+      <h3 style="margin:0 0 4px;color:var(--ya-teal,#4fd1b0)">BioSense Arduino</h3>
+      <div class="hint" style="margin-top:0">Reads pulse, skin conductance and temperature from the headband over a USB cable.</div>
+      <div id="bs-usb-pills">${usbPillsHtml()}</div>
+      <div class="hint ya-mount-note">Plug the Arduino in with the USB cable, tap Connect Arduino and choose it in the pop-up. Close the tracker's Arduino panel first, because only one page can use the Arduino at a time.</div>
+      <div class="nav-row ya-mount-actions">
+        <button type="button" class="btn-primary" data-bs="usb-connect"${off}>Connect Arduino</button>
+        <button type="button" class="btn-secondary" data-bs="usb-connect-webusb"${off}>Connect via WebUSB</button>
+        <button type="button" class="btn-secondary" data-bs="usb-connect-serial"${off}>Connect via Web Serial</button>
+        <button type="button" class="btn-danger" data-bs="usb-disconnect"${conn ? '' : ' disabled'}>Disconnect</button>
+      </div>
+      <div id="bs-usb-live">${usbLiveHtml()}</div>
+    </div>`;
+  }
+  function connectUsb(kind) {
     if (ui.usbConn || ui.usbBusy) return Promise.resolve(!!ui.usbConn);
     ui.usbBusy = true; ui.usbError = ''; ui.usbMsg = ''; ui.live = {}; ui.band = null;
-    const make = usbFactory || ((cb) => createUsbSource({ WebUsb: WebUsbCdcTransport, WebSerial: WebSerialTransport, ...cb }));
+    // 'webusb' / 'serial' force a transport by only exposing that API to the connector; anything else lets it choose.
+    const nv = typeof navigator !== 'undefined' ? navigator : null;
+    const nav = kind === 'webusb' ? { userAgent: nv?.userAgent || '', usb: nv?.usb }
+      : kind === 'serial' ? { userAgent: nv?.userAgent || '', serial: nv?.serial } : nv;
+    const make = usbFactory || ((cb) => createUsbSource({ WebUsb: WebUsbCdcTransport, WebSerial: WebSerialTransport, nav, ...cb }));
     const src = make({
       onSamples: ingestList,
       onBand: (b) => { ui.band = b; },
-      onStatus: (m) => { if (typeof m === 'string') { ui.usbMsg = m; ui.statusMsg = m; refreshUsbPanel(); } },
+      onStatus: (m) => { if (typeof m === 'string') { ui.usbMsg = m; ui.statusMsg = m; tickUsbPanel(); } },
       onError: (e) => { ui.usbConn = null; ui.usbBusy = false; ui.usbError = explainUsb(e); if (ui.running) ui.error = ui.usbError; stopConnTimer(); refreshUsbPanel(); },
       onClose: () => { ui.usbConn = null; ui.usbBusy = false; stopConnTimer(); refreshUsbPanel(); },
     });
@@ -369,6 +401,8 @@ export function initBioSense({ document: doc = document, storage = (typeof local
     switch (t.dataset.bs) {
       case 'back': if (ui.running) stop(); disconnectUsb(); win.goToScreen('home'); break;
       case 'usb-connect': connectUsb(); break;
+      case 'usb-connect-webusb': connectUsb('webusb'); break;
+      case 'usb-connect-serial': connectUsb('serial'); break;
       case 'usb-disconnect': disconnectUsb(); break;
       case 'start': { const u = view.querySelector('#bs-url'); if (u) ui.url = u.value.trim(); persist(); begin(false); break; }
       case 'baseline': { const u = view.querySelector('#bs-url'); if (u) ui.url = u.value.trim(); persist(); if (ui.running) stop(); begin(true); break; }
