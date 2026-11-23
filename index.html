@@ -4350,7 +4350,7 @@ const SOUNDS = {
 let landmarker=null, stream=null, rafId=null;
 let phoneMount = null;
 try { initBioSense(); } catch (e) { console.warn("BioSense could not start", e); }
-try { initMyHealth({ sb, getUser: () => authUser }); } catch (e) { console.warn("My Health could not start", e); }
+try { initMyHealth({ sb, getUser: () => authUser, workerUrl: WORKER_URL, getKriyas: async () => { try { if (!kriyaList.length) await loadKriyas(); } catch (e) {} return kriyaList; } }); } catch (e) { console.warn("My Health could not start", e); }
 const poseSmoother = createPoseSmoother(); // adaptive smoothing of pose landmarks (less jitter, little lag)
 const videoEl=document.getElementById("webcam"), canvasEl=document.getElementById("overlay"), ctx=canvasEl.getContext("2d");
 

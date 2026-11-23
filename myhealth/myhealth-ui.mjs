@@ -6,6 +6,7 @@ import { parseReport } from './extract.mjs';
 import { readFile, stopOcr, fileKind, ACCEPT } from './loader.mjs';
 import { buildSeries, seriesId } from './trends.mjs';
 import { createHealthStore } from './store.mjs';
+import { getOverview, SAFETY_NOTE } from './ai-overview.mjs';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtDate = (iso) => { if (!iso) return '—'; const d = new Date(`${iso}T00:00:00`); return Number.isNaN(+d) ? iso : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }); };
@@ -69,6 +70,9 @@ const CSS = `
 #myhealth-screen .mh-chart{width:100%;height:auto;background:#fff;border:1px solid #dfe6e2;border-radius:12px}
 #myhealth-screen table.mh-tbl{width:100%;border-collapse:collapse;font-size:.88rem;margin-top:10px}
 #myhealth-screen table.mh-tbl th,#myhealth-screen table.mh-tbl td{text-align:left;padding:8px 6px;border-bottom:1px solid #eef2f0}
+#myhealth-screen .mh-ov p{margin:6px 0}
+#myhealth-screen .mh-note-item{border:1px solid #dfe6e2;border-radius:10px;padding:10px 12px;margin:8px 0;background:#fafcfb}
+#myhealth-screen .mh-note-item b{display:block}
 @media(max-width:720px){
   #myhealth-screen .mh-wrap{padding:14px}
   #myhealth-screen .mh-thead{display:none}
@@ -80,12 +84,12 @@ const CSS = `
 const ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h8l4 4v14H7z"/><path d="M15 3v4h4"/><path d="M9 14h2l1-3 2 5 1-2h1"/></svg>';
 const DATE_REASON = /^(Read from an image|Test date not found|Date could be|Non-numeric result|Unit not found|Unit text unclear|Reference range unclear)/;
 
-export function initMyHealth({ sb, getUser, document: doc = document, win = window, storage = (typeof localStorage !== 'undefined' ? localStorage : null) } = {}) {
+export function initMyHealth({ sb, getUser, getKriyas = null, workerUrl = '', document: doc = document, win = window, storage = (typeof localStorage !== 'undefined' ? localStorage : null) } = {}) {
   if (!doc || !sb || doc.getElementById('myhealth-screen')) return null;
   const store = createHealthStore(sb, getUser);
   const prefs = (() => { try { return JSON.parse(storage?.getItem(PREF_KEY) || 'null') || {}; } catch { return {}; } })();
   const savePrefs = () => { try { storage?.setItem(PREF_KEY, JSON.stringify({ sex: prefs.sex || null, adult: !!prefs.adult })); } catch { /* ignore */ } };
-  const ui = { view: 'home', loaded: false, loading: false, error: '', notice: '', reports: [], results: [], series: new Map(), selId: null, tab: 'results', trendId: null, search: '', draft: null, progress: '', token: 0, saving: false, byReport: new Map() };
+  const ui = { view: 'home', loaded: false, loading: false, error: '', notice: '', reports: [], results: [], series: new Map(), selId: null, tab: 'results', trendId: null, search: '', draft: null, progress: '', token: 0, saving: false, byReport: new Map(), ov: new Map(), ovAyur: true };
 
   // ---------- DOM
   const style = doc.createElement('style'); style.textContent = CSS; doc.head.appendChild(style);
@@ -216,6 +220,7 @@ export function initMyHealth({ sb, getUser, document: doc = document, win = wind
     else if (ui.tab === 'trends') body = trendsHtml();
     else body = `<div class="mh-box"><div class="mh-row2" style="justify-content:space-between"><div><strong>${esc(fmtDate(sel?.test_date))}</strong>${sel?.lab_name ? ' · ' + esc(sel.lab_name) : ''}<div class="mh-sm">${rows.length} result${rows.length === 1 ? '' : 's'}${sel?.extraction_method === 'ocr' || sel?.extraction_method === 'mixed' ? ' · read from an image' : ''}</div></div>
         <div class="mh-row2">${sel?.file_path ? '<button type="button" class="mh-btn sec" data-mh="orig">View original</button>' : ''}<button type="button" class="mh-btn danger" data-mh="del">Delete report</button></div></div></div>
+      ${overviewHtml(ui.selId)}
       ${outside ? `<div class="mh-note">${outside} result${outside === 1 ? ' is' : 's are'} outside the range used. This does not by itself mean something is wrong; please discuss it with a doctor.</div>` : ''}
       <label class="mh-f">Search parameters<input type="search" id="mh-search" placeholder="e.g. haemoglobin, TSH, cholesterol" value="${esc(ui.search)}"></label>
       <div id="mh-groups">${groupsHtml(rows, !!ui.search.trim())}</div>`;
@@ -227,6 +232,45 @@ export function initMyHealth({ sb, getUser, document: doc = document, win = wind
         <div class="mh-note" style="margin-bottom:0">Privacy: the report is read on your device (text reading and OCR run in your browser) and is not sent to any AI service. After you confirm, it is saved to your own private storage that only you can open. You can delete it at any time.</div></div>
       ${ui.reports.length ? `<div class="mh-row2" style="margin-top:6px">${chips}</div><div class="mh-tabs"><button type="button" class="mh-tab${ui.tab === 'results' ? ' on' : ''}" data-mh="tab" data-t="results">Results</button><button type="button" class="mh-tab${ui.tab === 'trends' ? ' on' : ''}" data-mh="tab" data-t="trends">Trends</button></div>` : ''}
       ${body}<div class="mh-note">${esc(DISCLAIMER)}</div>`;
+  }
+  // ---------- AI Overview (plain-language summary + matching items from the user's own Ayurvedic notes)
+  function aiHtml(t) {
+    return String(t).split(/\n+/).map((l) => l.trim()).filter(Boolean).map((l) => (/^[-•*]\s+/.test(l) ? `<li>${esc(l.replace(/^[-•*]\s+/, ''))}</li>` : `<p>${esc(l)}</p>`)).join('').replace(/(?:<li>.*?<\/li>)+/g, (m) => `<ul style="margin:6px 0 6px 18px;padding:0">${m}</ul>`);
+  }
+  function overviewHtml(repId) {
+    if (!workerUrl || !repId) return '';
+    const rows = ui.results.filter((r) => r.report_id === repId); const out = rows.filter((r) => r.status === 'low' || r.status === 'high').length;
+    const st = ui.ov.get(repId); const head = '<h3 style="margin:0 0 6px">AI Overview</h3>';
+    if (!rows.length) return '';
+    if (st && st.status === 'loading') return `<div class="mh-box mh-ov">${head}<div class="mh-note" role="status">Writing your overview...</div></div>`;
+    if (st && st.status === 'error') return `<div class="mh-box mh-ov">${head}<div class="mh-err">${esc(st.error)}</div><button type="button" class="mh-btn sec" data-mh="ov-run">Try again</button></div>`;
+    if (st && st.status === 'done') {
+      const d = st.data; const nm = d.notes;
+      let h = `${head}${d.aiError ? `<div class="mh-warn">${esc(d.aiError)}</div>` : ''}<div>${aiHtml(d.text)}</div><div class="mh-sm">${d.source === 'ai' ? 'Written by AI from the results on this page. It can make mistakes.' : 'Basic summary, not written by AI.'} Only test names, values and statuses were sent. This overview is not saved.</div>`;
+      if (d.gate.suppressMeds) h += `<div class="mh-warn">Liver or kidney results are outside the range (${esc(d.gate.blockedNames.join(', '))}). Herbal and Ayurvedic products can be unsafe in that situation, so no suggestions are shown. Please see a doctor first.</div>`;
+      if (d.gate.marked.length) h += `<div class="mh-warn">${esc(d.gate.marked.join(', '))} ${d.gate.marked.length > 1 ? 'are' : 'is'} far outside the range. Please speak to a doctor soon rather than waiting.</div>`;
+      if (ui.ovAyur && !d.gate.suppressMeds) {
+        if (nm.status === 'no-db') h += '<div class="mh-note">No Ayurvedic entry was found in your Yog Kriya Notes. Add an entry whose title contains the word "Ayurveda" and it will be used here.</div>';
+        else if (nm.status === 'no-match') h += '<div class="mh-note">Your Ayurvedic notes have nothing that matches these results.</div>';
+        else if (nm.status === 'ok') h += `<h4 style="margin:14px 0 4px">From your Yog Kriya Notes</h4><div class="mh-sm">Copied from your own notes. This is not written by AI and is not a prescription.</div>${nm.matches.map((m) => `<div class="mh-note-item"><b>${esc(m.title)}</b>${esc(m.text.replace(/\s+/g, ' ').slice(0, 340))}${m.text.length > 340 ? '...' : ''}<div class="mh-sm">Matches: ${esc(m.relatedTo.join(', '))}</div></div>`).join('')}<div class="mh-warn">${esc(SAFETY_NOTE)}</div>`;
+      }
+      return `<div class="mh-box mh-ov">${h}<div class="mh-row2" style="margin-top:10px"><button type="button" class="mh-btn sec" data-mh="ov-run">Refresh overview</button>${ui.ovAyur ? '<button type="button" class="mh-btn sec" data-mh="ov-notes">Open Yog Kriya Notes</button>' : ''}</div></div>`;
+    }
+    if (!out) return `<div class="mh-box mh-ov">${head}<div class="mh-note" style="margin:0">No results are outside the range used, so there is nothing to explain.</div></div>`;
+    return `<div class="mh-box mh-ov">${head}<div class="mh-sm" style="margin-bottom:8px">A plain-language summary of the ${out} result${out === 1 ? '' : 's'} outside the range, with matching items from your Ayurvedic notes in Yog Kriya Notes.</div>
+      <div class="mh-check" style="color:#1c2521"><input type="checkbox" id="mh-ov-ayur"${ui.ovAyur ? ' checked' : ''}><label for="mh-ov-ayur">Include matching items from my Ayurvedic notes</label></div>
+      <div class="mh-note">To write the overview, the names, values and statuses of the results outside the range are sent to YogAI's AI service. Your name, the laboratory, dates and the original file are not sent, and nothing from the overview is saved.</div>
+      <button type="button" class="mh-btn" data-mh="ov-run">Get AI overview</button></div>`;
+  }
+  async function runOverview() {
+    const id = ui.selId; if (!id || !workerUrl) return;
+    ui.ov.set(id, { status: 'loading' }); render();
+    try {
+      const kriyas = getKriyas ? await getKriyas() : [];
+      const data = await getOverview({ workerUrl, kriyas, results: ui.results.filter((r) => r.report_id === id), includeAyurveda: ui.ovAyur });
+      ui.ov.set(id, { status: 'done', data });
+    } catch (e) { ui.ov.set(id, { status: 'error', error: (e && e.message) || 'Could not create the overview.' }); }
+    render();
   }
   const processingHtml = () => `<h2 class="mh-title">Reading your report</h2><div class="mh-note" role="status" aria-live="polite" id="mh-progress">${esc(ui.progress || 'Starting...')}</div><div class="mh-row2"><button type="button" class="mh-btn sec" data-mh="cancel">Cancel</button></div><div class="mh-sm">Scanned reports can take a minute. Nothing is saved yet.</div>`;
 
@@ -390,6 +434,8 @@ export function initMyHealth({ sb, getUser, document: doc = document, win = wind
       case 'addrow': { ui.draft.rows.push(newRow()); render(); const last = root.querySelector('.mh-erow:last-child input'); last?.focus(); break; }
       case 'rowdel': ui.draft.rows = ui.draft.rows.filter((r) => r.id !== t.dataset.id); render(); break;
       case 'save': save(); break;
+      case 'ov-run': runOverview(); break;
+      case 'ov-notes': if (win.showLearnList) win.showLearnList(); break;
       case 'orig': {
         const rep = ui.byReport.get(ui.selId); if (!rep?.file_path) break;
         try { const url = await store.signedUrl(rep.file_path); const w = win.open(url, '_blank', 'noopener'); if (!w) { ui.notice = ''; ui.error = 'Your browser blocked the pop-up. Allow pop-ups for this site and try again.'; render(); } }
@@ -425,6 +471,7 @@ export function initMyHealth({ sb, getUser, document: doc = document, win = wind
   root.addEventListener('change', (e) => {
     const t = e.target;
     if (t.id === 'mh-trend') { ui.trendId = t.value; render(); return; }
+    if (t.id === 'mh-ov-ayur') { ui.ovAyur = t.checked; return; }
     if (ui.view !== 'verify' || !ui.draft) return;
     if (t.dataset.gd !== undefined) {                                   // change a date group
       const old = t.dataset.gd, val = t.value;
