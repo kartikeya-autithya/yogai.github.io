@@ -631,7 +631,7 @@
   .db-chips, .db-meta { display:flex; flex-wrap:wrap; gap:8px; }
   .db-grid { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:20px; align-items:start; }
   .db-col, .db-right { min-width:0; }
-  .db-quick { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:11px; margin-bottom:18px; }
+  .db-quick { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:11px; margin-bottom:18px; }
   .db-action { min-height:170px; border:1px solid var(--border); border-radius:17px; padding:16px; color:var(--text); text-align:left; display:flex; flex-direction:column; align-items:flex-start; transition:transform .2s, border-color .2s; font-weight:500; }
   .db-action:hover { transform:translateY(-3px); border-color:var(--accent); opacity:1; }
   .db-mint { background:linear-gradient(145deg,#1c5c4c,#122b23); } .db-blue { background:linear-gradient(145deg,#245d50,#142b23); }
@@ -1527,6 +1527,7 @@ import { PoseLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@m
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.108.1";
 import { createContinuousMount } from "./tracker/continuous-mount.mjs";
 import { initBioSense } from "./biosense/biosense-ui.mjs";
+import { initMyHealth } from "./myhealth/myhealth-ui.mjs";
 import { createPoseSmoother } from "./pose-smoother.mjs";
 
 // ============================================================
@@ -4349,6 +4350,7 @@ const SOUNDS = {
 let landmarker=null, stream=null, rafId=null;
 let phoneMount = null;
 try { initBioSense(); } catch (e) { console.warn("BioSense could not start", e); }
+try { initMyHealth({ sb, getUser: () => authUser }); } catch (e) { console.warn("My Health could not start", e); }
 const poseSmoother = createPoseSmoother(); // adaptive smoothing of pose landmarks (less jitter, little lag)
 const videoEl=document.getElementById("webcam"), canvasEl=document.getElementById("overlay"), ctx=canvasEl.getContext("2d");
 
@@ -6442,7 +6444,8 @@ const DB_ICONS = {
   sparkle:["M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z","M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"],
   meditate:["M12 4a2 2 0 1 0 0 4 2 2 0 0 0 0-4z","M12 9v4","M6 17c2.5-.5 4-2.2 6-4 2 1.8 3.5 3.5 6 4","M4 20c3-1.2 5-1.2 8-1.2s5 0 8 1.2"],
   star:["M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"],
-  pulse:["M3 12h4l2-5 4 10 2-5h6"]
+  pulse:["M3 12h4l2-5 4 10 2-5h6"],
+  health:["M7 3h8l4 4v14H7z","M15 3v4h4","M9 14h2l1-3 2 5 1-2h1"]
 };
 let dbMsgBadge = null;
 function dbEl(tag, cls, text){ const e = document.createElement(tag); if(cls) e.className = cls; if(text != null) e.textContent = String(text); return e; }
@@ -6472,7 +6475,7 @@ function dbNavSpec(){
       ["routine", "Workout routines", () => goToScreen("routines")], ["build", "Personal routine", () => goToScreen("intake")],
       ["bookmark", "Saved routines", () => openSavedRoutines()], ["pose", "Free exercise", () => showFreeExercise()], ["flame", "Calorie burner", () => goToScreen("calorie")], ["meditate", "Meditation", () => showMeditation()]]],
     ["Learn", [["pose", "Pose explorer", () => yaNav("explore")], ["book", "Yog Kriya notes", () => showLearnList()], ["chat", "Yoga Assistant", () => showChat()]]],
-    ["You", [["message", "Messages", () => showMessages(), false, true], ["chart", "Progress", () => showProgressScreen()], ["heart", "Favorites", () => showFavoritesScreen()],
+    ["You", [["message", "Messages", () => showMessages(), false, true], ["health", "My Health", () => { if(window.showMyHealth) window.showMyHealth(); }], ["chart", "Progress", () => showProgressScreen()], ["heart", "Favorites", () => showFavoritesScreen()],
       ["user", "Profile", () => showAccountScreen()], ["gear", "Settings", () => showSettings()]]]
   ];
 }
@@ -6530,6 +6533,7 @@ function dbQuick(c){
   [["mint", "play", "Start a Practice", plan ? plan.estMinutes + " min " + String(plan.goalLabel).toLowerCase() + " practice, chosen for you." : "Jump into today's session.", () => startTodayPractice()],
    ["blue", "sparkle", "Suggest a Routine", "Choose a goal and time for a plan that respects your safety filters.", () => openSavedRoutines()],
    ["gold", "pulse", "BioSense", "Read your stress from pulse, skin and temperature, and get a pranayama for it.", () => showBioSense()],
+   ["blue", "health", "My Health", "Upload blood-test reports and see every result, with history and trends.", () => { if(window.showMyHealth) window.showMyHealth(); }],
    ["cyan", "chat", "Chat with Yoga Assistant", "Ask questions and get guidance for your practice.", () => showChat()]
   ].forEach(([tone, ico, title, desc, fn]) => {
     const b = dbBtn("db-action db-" + tone, null, fn), i = dbEl("span", "db-action-ico"); i.appendChild(dbIcon(ico));

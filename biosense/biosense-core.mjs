@@ -14,6 +14,8 @@
  *     "temp": 34.1,    // skin temperature, degrees C
  *     "gsr": 412 }     // skin conductance, any unit where HIGHER = more conductive (raw ADC is fine; see invertGsr)
  */
+import { createPulseStabilizer } from './pulse-stabilizer.mjs';
+
 
 export const DURATIONS = [1, 2, 3, 5, 10, 15, 20, 30];         // the Meditation screen's minute choices
 export const WINDOW_MS = 5 * 60 * 1000;
@@ -189,6 +191,7 @@ export function createBioSense({ now = () => Date.now(), storage = null } = {}) 
   let baseline = readJson(storage, BASELINE_KEY);
   let config = { invertGsr: false, tempMode: 'air', ...(readJson(storage, CONFIG_KEY) || {}) };   // tempMode: 'air' (a DHT22 reads the air next to the skin) or 'skin' (a sensor touching the skin)
   let sessionRef = {};
+  const pulse = createPulseStabilizer({ now });                      // validates every beat before it is used
   let calibrating = null;                                             // { startedAt, hr: [], ... }
   const history = [];                                                 // [{t, score}] one point every few seconds
 
@@ -196,16 +199,25 @@ export function createBioSense({ now = () => Date.now(), storage = null } = {}) 
 
   function start() {
     hrs = []; temps = []; gsrs = []; ibis = []; hums = []; startedAt = now(); lastSampleAt = null; validSeconds = new Set();
-    smoothScore = NaN; lastBand = null; sessionRef = {}; history.length = 0;
+    smoothScore = NaN; lastBand = null; sessionRef = {}; history.length = 0; pulse.reset();
   }
 
   /** Feed one message from the band. Returns true if anything usable was in it. */
   function ingest(msg) {
     if (!msg || typeof msg !== 'object') return false;
     const t = now(); let used = false;
-    if (finite(msg.hr) && msg.hr >= 30 && msg.hr <= 220) { hrs.push({ t, v: msg.hr }); used = true; }
+    // Pulse: every beat goes through the validator. Rejected beats (false peaks, missed beats, implausible values)
+    // are NOT used for heart rate or HRV; they only show up in the debug view.
     const list = Array.isArray(msg.ibis) ? msg.ibis : (msg.ibi !== undefined ? [msg.ibi] : []);
-    for (const v of list) if (finite(v) && v >= 250 && v <= 2000) { ibis.push({ t, v }); used = true; if (!finite(msg.hr)) hrs.push({ t, v: 60000 / v }); }
+    if (list.length) {
+      for (const v of list) {
+        const r = pulse.push({ ibi: v, hr: list.length === 1 ? msg.hr : undefined });
+        if (r.accepted) { ibis.push({ t, v: r.ibi }); hrs.push({ t, v: r.bpm }); used = true; }
+      }
+    } else if (finite(msg.hr)) {                    // heart rate only (no intervals): validated the same way, but gives no HRV
+      const r = pulse.push({ hr: msg.hr });
+      if (r.accepted) { hrs.push({ t, v: msg.hr }); used = true; }
+    }
     if (finite(msg.temp) && msg.temp >= 20 && msg.temp <= 45) { temps.push({ t, v: msg.temp }); used = true; }
     if (finite(msg.hum) && msg.hum >= 0 && msg.hum <= 100) { hums.push({ t, v: msg.hum }); used = true; }
     if (finite(msg.gsr) && msg.gsr >= 0) { gsrs.push({ t, v: config.invertGsr ? 1 / Math.max(msg.gsr, 1e-6) : msg.gsr }); used = true; }
@@ -226,7 +238,7 @@ export function createBioSense({ now = () => Date.now(), storage = null } = {}) 
     const g60 = since(gsrs, t, 60000);
     const t60 = since(temps, t, 60000);
     return {
-      hr: hr15.length >= 3 ? median(hr15) : NaN,
+      hr: (() => { const pr = pulse.reading(); return pr.state === 'stable' ? pr.bpm : NaN; })(),   // only a stable, validated reading is ever shown
       rmssd: rmssd(ibi60),
       scl: g20.length >= 10 ? scl(g20) : NaN,
       scrRate: scrPerMinute(g60),
@@ -306,7 +318,7 @@ export function createBioSense({ now = () => Date.now(), storage = null } = {}) 
   function setConfig(next) { config = { ...config, ...next }; writeJson(storage, CONFIG_KEY, config); }
 
   return {
-    start, ingest, features, analyze, status,
+    start, ingest, features, analyze, status, pulseReading: () => pulse.reading(), pulseLog: () => pulse.log(),
     startBaseline, baselineProgress, finishBaseline, clearBaseline, isCalibrating: () => calibrating !== null,
     getBaseline: () => baseline, getConfig: () => ({ ...config }), setConfig, getHistory: () => history.slice(),
     stop() { startedAt = null; },

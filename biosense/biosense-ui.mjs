@@ -62,6 +62,14 @@ export function sparkSvg(points, color) {
 }
 
 // ------------------------------------------------------------------------------------------------ styles
+const DBG_CSS = `
+#biosense-screen .bs-dbg-toggle{display:block;margin-top:16px;font-size:.8rem;color:var(--text-dim);cursor:pointer}
+#biosense-screen .bs-dbg-box{margin-top:10px;border:1px dashed var(--border);border-radius:10px;padding:10px;background:#0f1612}
+#biosense-screen #bs-dbg-cv{width:100%;height:auto;border-radius:6px;background:#0a100d;display:block}
+#biosense-screen .bs-dbg-info{font-size:.82rem;margin:8px 0;color:var(--text)}
+#biosense-screen .bs-dbg-log{font:12px/1.55 ui-monospace,Menlo,monospace;color:var(--text-dim);max-height:210px;overflow:auto}
+#biosense-screen .bs-dbg-log .ok{color:#4fd1b0}#biosense-screen .bs-dbg-log .no{color:#e57373}
+`;
 const CSS = `
 #biosense-screen .bs-sub{color:var(--text-dim);font-size:.92rem;margin:-4px 0 18px}
 .bs-chips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 14px}
@@ -124,13 +132,15 @@ export function initBioSense({ document: doc = document, storage = (typeof local
   const cfgKey = 'yogai.biosense.ui.v1';
   const saved = (() => { try { return JSON.parse(storage?.getItem(cfgKey) || 'null') || {}; } catch { return {}; } })();
   const ui = { source: saved.source || 'usb', url: saved.url || '', running: false, view: '', error: '', srcObj: null, demoTimer: null, tickTimer: null, override: null, baselineRun: false, demoT0: 0, notice: '', connecting: false, statusMsg: '', band: null, usbConn: null, usbBusy: false, usbError: '', usbMsg: '', live: {}, connTimer: null };
+  ui.debug = false; ui.dbg = []; ui.dbgTimer = null; ui.dbgInfoAt = 0;
   const persist = () => { try { storage?.setItem(cfgKey, JSON.stringify({ source: ui.source, url: ui.url })); } catch { /* ignore */ } };
 
   // ---- DOM: style, screen, home card
-  const style = doc.createElement('style'); style.textContent = CSS; doc.head.appendChild(style);
+  const style = doc.createElement('style'); style.textContent = CSS + DBG_CSS; doc.head.appendChild(style);
   const screen = doc.createElement('div'); screen.id = 'biosense-screen'; screen.className = 'screen';
   screen.innerHTML = `<div class="card"><button class="back-link" type="button" data-bs="back"><span class="back-link-icon" aria-hidden="true">←</span><span>Back</span></button>
-    <h2>BioSense</h2><div class="bs-sub">Your body's signals, turned into a stress level and a breathing practice.</div><div id="bs-view"></div></div>`;
+    <h2>BioSense</h2><div class="bs-sub">Your body's signals, turned into a stress level and a breathing practice.</div><div id="bs-view"></div>
+    <label class="bs-dbg-toggle"><input type="checkbox" id="bs-dbg-on"> Pulse debug mode (temporary): raw signal, filtering, detected peaks and BPM</label><div id="bs-dbg"></div></div>`;
   const anchor = doc.getElementById('home-screen');
   (anchor && anchor.parentElement ? anchor.parentElement : doc.body).appendChild(screen);
   const view = screen.querySelector('#bs-view');
@@ -150,6 +160,7 @@ export function initBioSense({ document: doc = document, storage = (typeof local
   function ingestList(list) {
     const t = now();
     for (const s of list) {
+      if (Array.isArray(s.dbg)) { dbgPush(s.dbg); continue; }      // raw/filtered/peak stream (firmware DEBUG_STREAM)
       bio.ingest(s);
       if (fin(s.hr) || fin(s.ibi)) ui.live.hr = t;
       if (fin(s.gsr)) ui.live.gsr = t;
@@ -183,8 +194,55 @@ export function initBioSense({ document: doc = document, storage = (typeof local
   }
   function usbFresh(k) { return !!ui.live[k] && now() - ui.live[k] < 6000; }
   function usbKindLabel() { const k = ui.usbConn && ui.usbConn.choose ? ui.usbConn.choose() : ''; return k === 'web-serial' ? 'Web Serial' : k === 'web-usb' ? 'WebUSB' : ''; }
+  const pulseOk = () => bio.pulseReading().state === 'stable';
+  function pulseHint() {
+    const st = bio.pulseReading().state;
+    return st === 'stabilising' ? 'getting a stable reading...' : st === 'poor' ? 'noisy signal: press the sensor snugly and hold still' : 'no pulse detected: rest the sensor snugly on your forehead';
+  }
+  function pulseMsgHtml() {
+    const st = bio.pulseReading().state;
+    const m = st === 'stabilising' ? 'Getting a stable reading...' : st === 'poor' ? 'The pulse signal is noisy or the sensor is not making good contact. Hold still and press the sensor snugly on your forehead.' : st === 'none' ? 'No pulse detected. Place the sensor snugly on your forehead.' : '';
+    return m ? `<div class="bs-warn" id="bs-pulse-msg" role="status">${esc(m)}</div>` : '';
+  }
+  // ---- temporary pulse debug view
+  function dbgPush(a) { ui.dbg.push({ t: now(), raw: a[0], flt: a[1], pk: a[2] | 0 }); if (ui.dbg.length > 400) ui.dbg.shift(); }
+  function drawDebug() {
+    ui.dbgTimer = null; if (!ui.debug) return;
+    const box = screen.querySelector('#bs-dbg'); if (!box) return;
+    if (!box.dataset.ready) { box.innerHTML = '<div class="bs-dbg-box"><canvas id="bs-dbg-cv" width="640" height="230"></canvas><div class="bs-dbg-info" id="bs-dbg-info"></div><div class="bs-dbg-log" id="bs-dbg-log"></div></div>'; box.dataset.ready = '1'; }
+    const cv = box.querySelector('#bs-dbg-cv'); const ctx = cv && cv.getContext ? cv.getContext('2d') : null;
+    if (ctx) {
+      const W = cv.width, H = cv.height; ctx.fillStyle = '#0a100d'; ctx.fillRect(0, 0, W, H);
+      const d = ui.dbg; const half = H / 2;
+      const plot = (key, y0, h, color, label) => {
+        if (d.length < 2) return;
+        const v = d.map((p) => p[key]); let lo = Math.min(...v), hi = Math.max(...v); if (hi === lo) { hi += 1; lo -= 1; }
+        ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.beginPath();
+        d.forEach((p, i) => { const x = (i / (d.length - 1)) * W; const y = y0 + h - 4 - ((p[key] - lo) / (hi - lo)) * (h - 14); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
+        ctx.stroke(); ctx.fillStyle = '#8fa097'; ctx.font = '11px sans-serif'; ctx.fillText(label, 6, y0 + 12);
+        d.forEach((p, i) => { if (p.pk) { const x = (i / (d.length - 1)) * W; ctx.strokeStyle = p.pk === 1 ? '#4fd1b0' : '#e57373'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y0 + h); ctx.stroke(); } });
+      };
+      plot('raw', 0, half, '#9aa8a1', 'Raw infrared (as read from the sensor)');
+      plot('flt', half, half, '#4fd1b0', 'Filtered (baseline removed, smoothed). Green line = accepted beat, red = rejected beat');
+    }
+    if (now() - ui.dbgInfoAt > 400) {
+      ui.dbgInfoAt = now();
+      const pr = bio.pulseReading(); const log = bio.pulseLog().slice(-10).reverse();
+      const stTxt = { stable: 'Stable', stabilising: 'Getting a stable reading...', poor: 'Poor contact or noisy signal', none: 'No pulse detected' }[pr.state];
+      const info = box.querySelector('#bs-dbg-info');
+      if (info) info.innerHTML = `<b>Calculated BPM:</b> ${pr.bpm != null ? pr.bpm : '—'} &nbsp; <b>State:</b> ${esc(stTxt)} &nbsp; <b>Accepted beats kept:</b> ${pr.accepted} &nbsp; <b>Recent rejects:</b> ${Math.round((pr.rejectRatio || 0) * 100)}%${pr.spread != null ? ` &nbsp; <b>Spread:</b> ${(pr.spread * 100).toFixed(1)}%` : ''}${ui.dbg.length ? '' : '<br><span class="bs-dim" style="padding:0">No raw waveform is arriving. Set DEBUG_STREAM to true in the Arduino sketch to see it. The beat list below still works.</span>'}`;
+      const lg = box.querySelector('#bs-dbg-log');
+      if (lg) lg.innerHTML = log.length ? log.map((e) => `<div class="${e.accepted ? 'ok' : 'no'}">${Math.round((now() - e.t) / 100) / 10}s ago · interval ${e.ibi} ms · ${e.bpm} bpm · ${e.accepted ? 'accepted' : 'rejected: ' + esc(e.reason)}${e.derived ? ' (from heart-rate value)' : ''}</div>`).join('') : '<div>No beats received yet.</div>';
+    }
+    ui.dbgTimer = setTimeout(drawDebug, 100);
+  }
+  screen.addEventListener('change', (e) => {
+    if (!e.target || e.target.id !== 'bs-dbg-on') return;
+    ui.debug = !!e.target.checked; const box = screen.querySelector('#bs-dbg');
+    if (ui.debug) { drawDebug(); } else { clearTimeout(ui.dbgTimer); ui.dbgTimer = null; if (box) { box.innerHTML = ''; box.dataset.ready = ''; } ui.dbg = []; }
+  });
   function usbPillsHtml() {
-    const conn = !!ui.usbConn; const n = ['hr', 'gsr', 'temp'].filter(usbFresh).length;
+    const conn = !!ui.usbConn; const n = (pulseOk() ? 1 : 0) + (usbFresh('gsr') ? 1 : 0) + (usbFresh('temp') ? 1 : 0);
     const pill = (ok, text) => `<span class="status-pill ${ok ? 'status-correct' : 'status-adjust'}">${text}</span>`;
     return `<div class="ya-mount-status-row">
       ${pill(conn, ui.usbBusy ? 'CONNECTING' : conn ? 'CONNECTED' : 'NOT CONNECTED')}
@@ -200,7 +258,7 @@ export function initBioSense({ document: doc = document, storage = (typeof local
     if (!conn) return html;
     const row = (good, label, hint) => `<div class="bs-note" style="margin-top:4px">${good ? '✓' : '…'} ${label}${good ? '' : ' · ' + hint}</div>`;
     const b = ui.band || {};
-    html += row(usbFresh('hr'), 'Pulse', 'rest the sensor snugly on your forehead')
+    html += row(pulseOk(), 'Pulse', pulseHint())
       + row(usbFresh('gsr'), 'Skin conductance', 'no signal yet')
       + row(usbFresh('temp'), 'Temperature', 'updates every few seconds');
     if (b.ppg === 0) html += '<div class="bs-warn">The MAX30102 is not found. Check VIN to 3.3V and SDA/SCL on A4/A5.</div>';
@@ -348,6 +406,7 @@ export function initBioSense({ document: doc = document, storage = (typeof local
         ${tile(bio.getConfig().tempMode === 'skin' ? 'Skin temperature' : 'Band temperature', fin(f.temp) ? f.temp.toFixed(1) + tempArrow : '—', fin(f.temp) ? '°C' + (fin(f.hum) ? ` · ${Math.round(f.hum)}% RH` : '') : '')}
         ${tile('Skin conductance', sclTxt, '')}
       </div>
+      ${pulseMsgHtml()}
       ${bandWarnings().map((t) => `<div class="bs-warn">${esc(t)}</div>`).join('')}
       ${r.issues.map((i) => `<div class="bs-warn">${esc(i.text)}</div>`).join('')}
       ${rec && shown ? `<div class="bs-rec">
