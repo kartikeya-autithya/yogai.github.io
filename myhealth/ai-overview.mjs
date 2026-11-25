@@ -5,6 +5,7 @@
 // Educational only. It never diagnoses and never gives doses. Liver/kidney results outside range switch the medicine part off.
 
 export const AYURVEDA_ENTRY = /ayurved/i;      // an entry counts as Ayurvedic if its title (or the start of its text) mentions this
+export const DISCLAIMER = 'Dosage and medicines must be run through a real doctor before being taken.';
 export const SAFETY_NOTE = 'Ayurvedic and herbal products can interact with prescription medicines, and some preparations contain metals or can strain the liver and kidneys. They are not suitable for everyone, for example during pregnancy, for children, or with an existing health condition. Do not start, stop or change any medicine because of this page. Please talk to a doctor or a qualified Ayurvedic practitioner first.';
 
 // search words per standard test (any word found in a note counts as a match). Names of the tests themselves are added automatically.
@@ -80,42 +81,61 @@ export function matchNotes(kriyas, items, { perItem = 3, total = 10 } = {}) {
 }
 
 // ---- the request to the AI (small: only test names, values, statuses and the matched note passages)
-const SYSTEM = [
-  'You write a short educational overview of someone\'s blood-test results for the YogAI app.',
-  'RULES: Use only the results listed. Never diagnose, never say a result means or proves a condition, never name a disease as the cause.',
-  'Plain, calm language, at most 170 words. Say in general terms what each out-of-range test measures. Say that being outside a range does not by itself mean a disease.',
-  'Then, only if NOTES are provided, add a heading "From your Ayurvedic notes:" with at most 4 bullet items.',
-  'Use ONLY items that appear in the numbered NOTES. Copy each item\'s name exactly as written in the notes and say which result it relates to. Never add an item from your own knowledge.',
-  'Never give doses, amounts, durations or instructions to take, buy or use anything. Never say anything treats, cures, fixes or lowers anything; say "your notes list it in connection with ...".',
-  'If the notes contain nothing relevant, write "Your notes have nothing for these results."',
-  'End with one line: discuss these results, and any herbal or Ayurvedic product, with a doctor or qualified Ayurvedic practitioner first.',
-].join(' ').slice(0, 1990);
+export const HEADINGS = { results: 'I noticed these results out of place:', advice: 'Ayurvedic advice from your notes:', medicine: 'Medicine listed in your notes:' };
+const COMMON = [
+  'You are YogAI\'s friendly health-information assistant. Write a helpful, calm answer in plain language, using ONLY the results and NOTES you are given.',
+  'Never diagnose, never say a result proves a condition, never name a disease as the cause. Being outside a range does not by itself mean a disease.',
+  'Never state doses, amounts, or how long or how often to take anything. Never say anything cures, treats or fixes a condition; say "your notes list ...". Do not write a disclaimer, one is added automatically.',
+];
+const SYSTEM_FULL = [...COMMON,
+  'Use exactly these three headings, each on its own line, in this order:',
+  HEADINGS.results, HEADINGS.advice, HEADINGS.medicine,
+  'Under the first heading write one short bullet per result: what the test measures and whether it is low or high, in simple words.',
+  'Under the second heading explain in your own words the Ayurvedic advice (diet, lifestyle, practices) that the NOTES give for these results, and say which result each piece of advice relates to.',
+  'Under the third heading name the medicine(s) the NOTES list for these results, exactly as written in the NOTES, with one sentence on what the notes say it is for. Use only names that appear in the NOTES.',
+  'Never invent advice or medicines that are not in the NOTES. If the NOTES have nothing for a result, say so under that heading. Maximum 300 words.'].join(' ').slice(0, 1990);
+const SYSTEM_RESULTS = [...COMMON,
+  'Use exactly one heading on its own line:', HEADINGS.results,
+  'Under it write one short bullet per result: what the test measures and whether it is low or high, in simple words. Do not mention any herbal, Ayurvedic or other medicine. Maximum 200 words.'].join(' ').slice(0, 1990);
 
 export function buildRequest(items, noteMatches, gate, includeAyurveda, counts) {
   const lines = items.slice(0, 25).map((i, n) => `${n + 1}. ${i.name}: ${i.value} ${i.unit} (${i.status.toUpperCase()}${i.rangeText ? `; range ${i.rangeText}` : ''})`);
   let msg = `Results outside the reference range:\n${lines.join('\n')}\nResults within range: ${counts.normal}. Results not interpreted (need verification): ${counts.verify}.\n`;
-  if (includeAyurveda && !gate.suppressMeds && noteMatches.matches.length) {
-    msg += '\nNOTES from the user\'s own Ayurvedic database (the ONLY source for the Ayurvedic section):\n' + noteMatches.matches.slice(0, 8).map((m, n) => `[${n + 1}] ${m.title}: ${m.text.replace(/\s+/g, ' ').slice(0, 380)}`).join('\n');
-  } else {
-    msg += '\nNo NOTES are provided. Do not include an Ayurvedic section and do not mention any herbal or Ayurvedic product.';
+  const useNotes = includeAyurveda && !gate.suppressMeds && noteMatches.matches.length;
+  if (useNotes) {
+    const picks = noteMatches.matches.slice(0, 8); const budget = 3850 - msg.length - 140;
+    const each = Math.max(150, Math.min(650, Math.floor(budget / picks.length) - 20));
+    msg += '\nNOTES from the user\'s own Ayurvedic database (the ONLY source for advice and medicines):\n' + picks.map((m, n) => `[${n + 1}] ${m.title}: ${m.text.replace(/\s+/g, ' ').slice(0, each)}`).join('\n');
+  } else if (includeAyurveda && !gate.suppressMeds) {
+    msg += '\nNo matching NOTES were found. Under the advice and medicine headings, if you use them, say only: "Your notes have nothing for these results."';
   }
-  return { message: msg.slice(0, 3900), systemPrompt: SYSTEM, history: [], appContext: '' };
+  return { message: msg.slice(0, 3950), systemPrompt: useNotes ? SYSTEM_FULL : (includeAyurveda && !gate.suppressMeds ? SYSTEM_FULL : SYSTEM_RESULTS), history: [], appContext: '' };
 }
 
-const BAD = /(\b\d+(?:\.\d+)?\s*(?:mg|mcg|g|gm|ml|tablets?|tabs?|capsules?|drops?|spoons?|tsp|tbsp|times|days|weeks|months)\b|\b(?:cures?|cured|treats?|heals?|guaranteed|take\s+(?:one|two|\d)|twice\s+(?:a|daily)|once\s+(?:a|daily)|before\s+(?:meals|food)|after\s+(?:meals|food)|you\s+should\s+(?:take|start|use)|diagnos(?:is|e|ed)\s+(?:of|with)|you\s+have\s+(?:a|an)?\s*(?:anemia|anaemia|diabetes|thyroid|hypothyroidism|disease)))/i;
-export function checkReply(text) {
-  const t = String(text || '').trim();
-  if (!t) return { ok: false, reason: 'empty' };
-  const m = t.match(BAD);
-  if (m) return { ok: false, reason: `contains "${m[0]}"` };
-  return { ok: true, text: t };
-}
+// Things the answer must never contain. Units like "mg/dL" or "g/dL" are NOT doses and are allowed.
+const DOSE = /\b\d+(?:\.\d+)?\s*(?:mg|mcg|g|gm|gms|ml|tablets?|tabs?|capsules?|drops?|spoons?|teaspoons?|tablespoons?|tsp|tbsp)\b(?!\s*\/)/i;
+const TIMING = /\b(?:\d+\s*times\s*(?:a|per|daily|each)|(?:once|twice|thrice)\s+(?:a|per|daily|every)|every\s+(?:morning|night|day)\s+(?:with|for|before|after)|for\s+\d+\s*(?:days?|weeks?|months?)|(?:before|after)\s+(?:meals?|food|eating|breakfast|lunch|dinner)|at\s+bedtime|empty\s+stomach)\b/i;
+const CLAIM = /\b(?:cures?|cured|curing|heals?|guaranteed?|guarantees|will\s+(?:treat|fix|reverse|lower|raise)|treats?\s+(?:your|the)?\s*(?:anemia|anaemia|diabetes|cholesterol|thyroid)|you\s+should\s+(?:take|start|use|buy|stop)|you\s+must\s+(?:take|use)|take\s+(?:one|two|three|\d))\b/i;
+const DIAG = /\byou\s+(?:have|are\s+suffering\s+from|suffer\s+from)\s+(?:an?\s+)?(?:anemia|anaemia|diabetes|prediabetes|hypothyroidism|hyperthyroidism|disease|deficiency|gout|fatty\s+liver)/i;
+export function badReason(line) { for (const [n, re] of [['dose', DOSE], ['timing', TIMING], ['claim', CLAIM], ['diagnosis', DIAG]]) { const m = String(line).match(re); if (m) return `${n}: "${m[0]}"`; } return ''; }
 
-// plain summary made by code, used when the AI is unavailable or its answer is rejected
+// Drop only the offending lines instead of throwing the whole answer away.
+export function scrubReply(text) {
+  const raw = String(text || '').trim(); if (!raw) return { ok: false, reason: 'empty' };
+  const lines = raw.split(/\n/); const kept = []; const dropped = [];
+  for (const l of lines) { const r = badReason(l); if (r) dropped.push(r); else kept.push(l); }
+  const out = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  const hasBody = kept.filter((l) => l.trim() && !/:\s*$/.test(l.trim())).length >= 2;
+  if (!hasBody || (dropped.length && dropped.length > lines.filter((l) => l.trim()).length * 0.5)) return { ok: false, reason: dropped.join('; ') || 'too short' };
+  return { ok: true, text: out, dropped };
+}
+export const checkReply = (t) => scrubReply(t);
+
+// plain answer made by code (same layout), used when the AI is unavailable or its answer cannot be used
 export function basicSummary(items, counts) {
   if (!items.length) return 'No results are outside the reference range used.';
-  const parts = items.map((i) => `${i.name} is ${i.status === 'low' ? 'below' : 'above'} the range (${i.value} ${i.unit}${i.rangeText ? `, range ${i.rangeText}` : ''})`);
-  return `${parts.join('; ')}. ${counts.normal} other result${counts.normal === 1 ? ' is' : 's are'} within range. A result outside its range does not by itself mean a disease; please discuss it with a doctor.`;
+  const bullets = items.map((i) => `- ${i.name}: ${i.value} ${i.unit} is ${i.status === 'low' ? 'below' : 'above'} the range${i.rangeText ? ` (${i.rangeText})` : ''}.`);
+  return `${HEADINGS.results}\n${bullets.join('\n')}\n${counts.normal} other result${counts.normal === 1 ? ' is' : 's are'} within range. Being outside a range does not by itself mean a disease; please discuss it with a doctor.`;
 }
 
 export async function getOverview({ workerUrl, kriyas, results, includeAyurveda = true, fetchFn = (typeof fetch === 'function' ? fetch : null), timeoutMs = 45000 }) {
@@ -123,7 +143,7 @@ export async function getOverview({ workerUrl, kriyas, results, includeAyurveda 
   const counts = { normal: results.filter((r) => r.status === 'normal').length, verify: results.filter((r) => r.status === 'verify').length };
   const gate = safetyGate(items);
   const notes = includeAyurveda && !gate.suppressMeds && items.length ? matchNotes(kriyas, items) : { status: 'off', matches: [], entries: findAyurvedaDb(kriyas).length };
-  const out = { items, counts, gate, notes, text: '', source: 'basic', aiError: '' };
+  const out = { items, counts, gate, notes, text: '', source: 'basic', aiError: '', disclaimer: !!(includeAyurveda && !gate.suppressMeds && items.length) };
   if (!items.length) { out.text = basicSummary(items, counts); return out; }
   if (!workerUrl || !fetchFn) { out.text = basicSummary(items, counts); out.aiError = 'AI is not set up.'; return out; }
   const ctl = typeof AbortController === 'function' ? new AbortController() : null; const timer = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : null;
@@ -131,9 +151,9 @@ export async function getOverview({ workerUrl, kriyas, results, includeAyurveda 
     const res = await fetchFn(workerUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(buildRequest(items, notes, gate, includeAyurveda, counts)), signal: ctl ? ctl.signal : undefined });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'The AI service could not answer right now.');
-    const chk = checkReply(data.reply);
-    if (chk.ok) { out.text = chk.text; out.source = 'ai'; }
-    else { out.text = basicSummary(items, counts); out.aiError = 'The AI answer was not used because it did not meet the safety rules, so a basic summary is shown instead.'; }
+    const chk = scrubReply(data.reply);
+    if (chk.ok) { out.text = chk.text; out.source = 'ai'; if (chk.dropped.length) out.scrubbed = chk.dropped; }
+    else { out.text = basicSummary(items, counts); out.aiError = 'The AI answer could not be used, so a basic summary is shown with the matching passages from your notes.'; if (typeof console !== 'undefined') console.warn('[My Health] AI answer rejected:', chk.reason); }
   } catch (e) {
     out.text = basicSummary(items, counts);
     out.aiError = e && e.name === 'AbortError' ? 'The AI took too long to answer.' : (e && e.message) || 'The AI service could not be reached.';

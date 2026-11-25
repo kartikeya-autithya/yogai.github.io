@@ -6,7 +6,7 @@ import { parseReport } from './extract.mjs';
 import { readFile, stopOcr, fileKind, ACCEPT } from './loader.mjs';
 import { buildSeries, seriesId } from './trends.mjs';
 import { createHealthStore } from './store.mjs';
-import { getOverview, SAFETY_NOTE } from './ai-overview.mjs';
+import { getOverview, SAFETY_NOTE, DISCLAIMER as MED_DISCLAIMER } from './ai-overview.mjs';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtDate = (iso) => { if (!iso) return '—'; const d = new Date(`${iso}T00:00:00`); return Number.isNaN(+d) ? iso : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }); };
@@ -71,6 +71,13 @@ const CSS = `
 #myhealth-screen table.mh-tbl{width:100%;border-collapse:collapse;font-size:.88rem;margin-top:10px}
 #myhealth-screen table.mh-tbl th,#myhealth-screen table.mh-tbl td{text-align:left;padding:8px 6px;border-bottom:1px solid #eef2f0}
 #myhealth-screen .mh-ov p{margin:6px 0}
+#myhealth-screen .mh-ai{background:#17211c;border:1px solid #3b4a42;border-radius:12px;padding:14px 16px;margin:8px 0;color:#f2c14e;font-size:1rem;line-height:1.55}
+#myhealth-screen .mh-ai p,#myhealth-screen .mh-ai li{color:#f2c14e;margin:6px 0}
+#myhealth-screen .mh-ai h4{margin:14px 0 4px;color:#ffd86b;font-size:1.02rem;letter-spacing:.01em}
+#myhealth-screen .mh-ai h4:first-child{margin-top:0}
+#myhealth-screen .mh-ai strong{color:#ffdf8a}
+#myhealth-screen .mh-ai ul{margin:6px 0 6px 20px;padding:0}
+#myhealth-screen .mh-ai-disc{margin-top:14px;padding-top:10px;border-top:1px solid #4a5a50;font-weight:700;color:#ffd86b}
 #myhealth-screen .mh-note-item{border:1px solid #dfe6e2;border-radius:10px;padding:10px 12px;margin:8px 0;background:#fafcfb}
 #myhealth-screen .mh-note-item b{display:block}
 @media(max-width:720px){
@@ -235,7 +242,19 @@ export function initMyHealth({ sb, getUser, getKriyas = null, workerUrl = '', do
   }
   // ---------- AI Overview (plain-language summary + matching items from the user's own Ayurvedic notes)
   function aiHtml(t) {
-    return String(t).split(/\n+/).map((l) => l.trim()).filter(Boolean).map((l) => (/^[-•*]\s+/.test(l) ? `<li>${esc(l.replace(/^[-•*]\s+/, ''))}</li>` : `<p>${esc(l)}</p>`)).join('').replace(/(?:<li>.*?<\/li>)+/g, (m) => `<ul style="margin:6px 0 6px 18px;padding:0">${m}</ul>`);
+    const inline = (x) => esc(x).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    const H = /^(?:#+\s*)?\**\s*(I noticed these results out of place|Ayurvedic advice from your notes|Medicine listed in your notes)\s*:?\s*\**\s*$/i;
+    const out = []; let inList = false;
+    for (const raw of String(t).split(/\n+/)) {
+      const l = raw.trim(); if (!l) continue;
+      const h = l.match(H); const li = l.match(/^(?:[-•*]|\d+[.)])\s+(.*)$/);
+      if (inList && !li) { out.push('</ul>'); inList = false; }
+      if (h) out.push(`<h4>${esc(h[1])}:</h4>`);
+      else if (li) { if (!inList) { out.push('<ul>'); inList = true; } out.push(`<li>${inline(li[1])}</li>`); }
+      else out.push(`<p>${inline(l)}</p>`);
+    }
+    if (inList) out.push('</ul>');
+    return out.join('');
   }
   function overviewHtml(repId) {
     if (!workerUrl || !repId) return '';
@@ -246,13 +265,14 @@ export function initMyHealth({ sb, getUser, getKriyas = null, workerUrl = '', do
     if (st && st.status === 'error') return `<div class="mh-box mh-ov">${head}<div class="mh-err">${esc(st.error)}</div><button type="button" class="mh-btn sec" data-mh="ov-run">Try again</button></div>`;
     if (st && st.status === 'done') {
       const d = st.data; const nm = d.notes;
-      let h = `${head}${d.aiError ? `<div class="mh-warn">${esc(d.aiError)}</div>` : ''}<div>${aiHtml(d.text)}</div><div class="mh-sm">${d.source === 'ai' ? 'Written by AI from the results on this page. It can make mistakes.' : 'Basic summary, not written by AI.'} Only test names, values and statuses were sent. This overview is not saved.</div>`;
+      let h = `${head}${d.aiError ? `<div class="mh-warn">${esc(d.aiError)}</div>` : ''}<div class="mh-ai">${aiHtml(d.text)}${d.disclaimer ? `<div class="mh-ai-disc">${esc(MED_DISCLAIMER)}</div>` : ''}</div><div class="mh-sm">${d.source === 'ai' ? 'Written by AI from the results on this page and your notes. It can make mistakes.' : 'Basic summary, not written by AI.'} Only test names, values and statuses were sent. This overview is not saved.</div>`;
       if (d.gate.suppressMeds) h += `<div class="mh-warn">Liver or kidney results are outside the range (${esc(d.gate.blockedNames.join(', '))}). Herbal and Ayurvedic products can be unsafe in that situation, so no suggestions are shown. Please see a doctor first.</div>`;
       if (d.gate.marked.length) h += `<div class="mh-warn">${esc(d.gate.marked.join(', '))} ${d.gate.marked.length > 1 ? 'are' : 'is'} far outside the range. Please speak to a doctor soon rather than waiting.</div>`;
       if (ui.ovAyur && !d.gate.suppressMeds) {
         if (nm.status === 'no-db') h += '<div class="mh-note">No Ayurvedic entry was found in your Yog Kriya Notes. Add an entry whose title contains the word "Ayurveda" and it will be used here.</div>';
         else if (nm.status === 'no-match') h += '<div class="mh-note">Your Ayurvedic notes have nothing that matches these results.</div>';
-        else if (nm.status === 'ok') h += `<h4 style="margin:14px 0 4px">From your Yog Kriya Notes</h4><div class="mh-sm">Copied from your own notes. This is not written by AI and is not a prescription.</div>${nm.matches.map((m) => `<div class="mh-note-item"><b>${esc(m.title)}</b>${esc(m.text.replace(/\s+/g, ' ').slice(0, 340))}${m.text.length > 340 ? '...' : ''}<div class="mh-sm">Matches: ${esc(m.relatedTo.join(', '))}</div></div>`).join('')}<div class="mh-warn">${esc(SAFETY_NOTE)}</div>`;
+        else if (nm.status === 'ok') h += `<details class="mh-group"${d.source === 'ai' ? '' : ' open'} style="margin-top:12px"><summary>Matching passages from my Yog Kriya Notes <span class="mh-cnt">${nm.matches.length}</span></summary><div style="padding:6px 14px 12px"><div class="mh-sm">Copied from your own notes. This is not written by AI and is not a prescription.</div>${nm.matches.map((m) => `<div class="mh-note-item"><b>${esc(m.title)}</b>${esc(m.text.replace(/\s+/g, ' ').slice(0, 500))}${m.text.length > 500 ? '...' : ''}<div class="mh-sm">Matches: ${esc(m.relatedTo.join(', '))}</div></div>`).join('')}</div></details>`;
+        if (d.disclaimer) h += `<details style="margin-top:10px"><summary class="mh-sm" style="cursor:pointer">More safety information</summary><div class="mh-warn">${esc(SAFETY_NOTE)}</div></details>`;
       }
       return `<div class="mh-box mh-ov">${h}<div class="mh-row2" style="margin-top:10px"><button type="button" class="mh-btn sec" data-mh="ov-run">Refresh overview</button>${ui.ovAyur ? '<button type="button" class="mh-btn sec" data-mh="ov-notes">Open Yog Kriya Notes</button>' : ''}</div></div>`;
     }
